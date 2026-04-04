@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,9 +15,9 @@ type AgentStatusType string
 
 const (
 	StatusWorking AgentStatusType = "WORKING"
-	StatusIdle   AgentStatusType = "IDLE"
-	StatusWait   AgentStatusType = "WAITING"
-	StatusNone  AgentStatusType = "NONE"
+	StatusIdle    AgentStatusType = "IDLE"
+	StatusWait    AgentStatusType = "WAITING"
+	StatusNone    AgentStatusType = "NONE"
 )
 
 type AgentStatus struct {
@@ -34,6 +35,11 @@ type AgentStatus struct {
 	MessageCount  int
 	GitLog        []string
 	Available     bool
+
+	// Richer fields
+	InputTokens  int   // latest input token count for context estimation
+	HasError     bool  // last tool_result had is_error
+	AheadBehind  string // e.g. "+3/-0" relative to main
 }
 
 func ClaudeProjectPath(worktreePath string) string {
@@ -98,7 +104,10 @@ func GetInsights(worktreePath string) AgentStatus {
 		CostUSD:       parsed.cost,
 		TurnDurationS: parsed.turnDurationS,
 		MessageCount:  parsed.messageCount,
+		InputTokens:   parsed.inputTokens,
+		HasError:      parsed.hasError,
 		GitLog:        getGitLog(worktreePath),
+		AheadBehind:   getAheadBehind(worktreePath),
 		Available:     true,
 	}
 }
@@ -113,6 +122,8 @@ type sessionData struct {
 	cost          float64
 	turnDurationS int
 	messageCount  int
+	inputTokens   int
+	hasError      bool
 }
 
 func scanSession(path string) sessionData {
@@ -135,8 +146,8 @@ func scanSession(path string) sessionData {
 		Subtype string `json:"subtype"`
 		Slug    string `json:"slug"`
 		Message struct {
-			Model   string `json:"model"`
-			Role    string `json:"role"`
+			Model   string          `json:"model"`
+			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
 			Usage   struct {
 				InputTokens              int `json:"input_tokens"`
@@ -171,7 +182,6 @@ func scanSession(path string) sessionData {
 			if entry.PermissionMode != "" {
 				result.mode = entry.PermissionMode
 			}
-			// Extract user prompt as task
 			text := extractTextFromContent(entry.Message.Content)
 			if text != "" {
 				lastUserTask = text
@@ -180,8 +190,16 @@ func scanSession(path string) sessionData {
 			if entry.Message.Model != "" {
 				result.model = entry.Message.Model
 			}
-			// Check for tool use
 			result.lastTool = extractToolName(entry.Message.Content)
+			result.hasError = checkToolError(entry.Message.Content)
+
+			// Track input tokens from latest assistant message
+			if entry.Message.Usage.InputTokens > 0 {
+				result.inputTokens = entry.Message.Usage.InputTokens +
+					entry.Message.Usage.CacheCreationInputTokens +
+					entry.Message.Usage.CacheReadInputTokens
+			}
+
 			// Accumulate cost
 			p := pricing[modelTier(entry.Message.Model)]
 			u := entry.Message.Usage
@@ -197,7 +215,6 @@ func scanSession(path string) sessionData {
 		}
 	}
 
-	// Set task from the most recent user prompt
 	if lastUserTask != "" {
 		if len(lastUserTask) > 80 {
 			result.task = lastUserTask[:80] + "..."
@@ -206,7 +223,6 @@ func scanSession(path string) sessionData {
 		}
 	}
 
-	// Determine status from last entry type
 	switch lastType {
 	case "user":
 		result.status = StatusWorking
@@ -224,12 +240,10 @@ func scanSession(path string) sessionData {
 }
 
 func extractTextFromContent(raw json.RawMessage) string {
-	// Try as string first (user messages)
 	var s string
 	if json.Unmarshal(raw, &s) == nil && s != "" {
 		return s
 	}
-	// Try as array of content blocks
 	var blocks []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
@@ -259,16 +273,31 @@ func extractToolName(raw json.RawMessage) string {
 	return ""
 }
 
-// Pricing per million tokens (USD) — Opus 4.6 / Sonnet 4.6 / Haiku 4.5
+func checkToolError(raw json.RawMessage) bool {
+	var blocks []struct {
+		Type    string `json:"type"`
+		IsError bool   `json:"is_error"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		for _, b := range blocks {
+			if b.Type == "tool_result" && b.IsError {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Pricing per million tokens (USD)
 type modelPricing struct {
-	input       float64
-	output      float64
-	cacheWrite  float64
-	cacheRead   float64
+	input      float64
+	output     float64
+	cacheWrite float64
+	cacheRead  float64
 }
 
 var pricing = map[string]modelPricing{
-	"opus": {input: 15.0, output: 75.0, cacheWrite: 18.75, cacheRead: 1.50},
+	"opus":   {input: 15.0, output: 75.0, cacheWrite: 18.75, cacheRead: 1.50},
 	"sonnet": {input: 3.0, output: 15.0, cacheWrite: 3.75, cacheRead: 0.30},
 	"haiku":  {input: 0.80, output: 4.0, cacheWrite: 1.0, cacheRead: 0.08},
 }
@@ -294,4 +323,31 @@ func getGitLog(worktreePath string) []string {
 		return nil
 	}
 	return lines
+}
+
+func getAheadBehind(worktreePath string) string {
+	// Get the main branch to compare against
+	mainBranch := "main"
+	if out, err := exec.Command("git", "-C", worktreePath, "symbolic-ref", "refs/remotes/origin/HEAD").Output(); err == nil {
+		parts := strings.Split(strings.TrimSpace(string(out)), "/")
+		if len(parts) > 0 {
+			mainBranch = parts[len(parts)-1]
+		}
+	}
+
+	out, err := exec.Command("git", "-C", worktreePath, "rev-list", "--left-right", "--count", mainBranch+"...HEAD").Output()
+	if err != nil {
+		return ""
+	}
+
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) != 2 {
+		return ""
+	}
+
+	behind, ahead := parts[0], parts[1]
+	if ahead == "0" && behind == "0" {
+		return ""
+	}
+	return fmt.Sprintf("+%s/-%s", ahead, behind)
 }

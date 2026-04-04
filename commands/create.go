@@ -42,8 +42,12 @@ func Create(opts CreateOptions) error {
 }
 
 func isMainRepo(path string) bool {
-	out, _ := exec.Command("git", "-C", path, "worktree", "list", "--porcelain").Output()
-	return !contains(string(out), "worktree ")
+	// Check if .git is a directory (main repo) vs a file (worktree)
+	info, err := os.Stat(filepath.Join(path, ".git"))
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 func findMainRepo(worktreePath string) (string, error) {
@@ -52,10 +56,6 @@ func findMainRepo(worktreePath string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && strings.Contains(s, substr)
 }
 
 func getMainBranch(repo string) string {

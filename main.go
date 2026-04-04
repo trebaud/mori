@@ -8,7 +8,7 @@ import (
 	"github.com/moosecode/mori/commands"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -23,6 +23,10 @@ func main() {
 		runList(os.Args[2:])
 	case "remove", "rm":
 		runRemove(os.Args[2:])
+	case "open":
+		runOpen(os.Args[2:])
+	case "status":
+		runStatus()
 	case "version", "--version", "-v":
 		fmt.Printf("mori v%s\n", version)
 	case "help", "--help", "-h":
@@ -59,11 +63,15 @@ func runNew(args []string) {
 
 func runList(args []string) {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
-	var jsonOutput bool
+	var (
+		jsonOutput   bool
+		statusFilter string
+	)
 	fs.BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	fs.StringVar(&statusFilter, "status", "", "Filter by status (working, idle, waiting, none)")
 	fs.Parse(args)
 
-	if err := commands.PrintList(jsonOutput); err != nil {
+	if err := commands.PrintList(jsonOutput, statusFilter); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -88,21 +96,43 @@ func runRemove(args []string) {
 	}
 }
 
+func runOpen(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "Usage: mori open <branch>\n")
+		os.Exit(1)
+	}
+
+	if err := commands.Open(args[0]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runStatus() {
+	if err := commands.Status(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func printHelp() {
 	fmt.Printf(`Mori v%s - Git worktree manager with Claude Code insights
 
 Usage:
   mori                          Launch interactive TUI
   mori new [branch] [flags]     Create a new worktree
-  mori list                     List worktrees
+  mori list [flags]             List worktrees
   mori remove <branch> [flags]  Remove a worktree
+  mori open <branch>            Switch to worktree by branch name
+  mori status                   Show worktree summary
 
 Flags (new):
   -c, --claude      Launch Claude Code after creating
   -r, --repo PATH   Repository root (default: current directory)
 
 Flags (list):
-      --json        Output as JSON
+      --json            Output as JSON (includes insights data)
+      --status STATUS   Filter by status (working, idle, waiting, none)
 
 Flags (remove):
   -f, --force       Skip confirmation prompts
@@ -114,5 +144,8 @@ Global:
 TUI keys:
   j/k, arrows    Navigate        i       Toggle insights
   Enter          Select worktree  q       Quit
+  n              New worktree     d       Delete worktree
+  /              Filter           s       Cycle sort mode
+  r              Refresh          ?       Show all keybindings
 `, version)
 }
