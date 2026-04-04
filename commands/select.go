@@ -65,7 +65,6 @@ func List() ([]tui.Worktree, error) {
 
 	for i := range wts {
 		wts[i].RelativePath = makeRelativePath(wts[i].Path, mainPath, home)
-		wts[i].ClaudeSession, wts[i].ClaudeStale = agent.CheckSession(wts[i].Path)
 		wts[i].Insights = agent.GetInsights(wts[i].Path)
 	}
 

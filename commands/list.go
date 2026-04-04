@@ -29,13 +29,7 @@ type worktreeJSON struct {
 }
 
 func sessionLabel(wt tui.Worktree) string {
-	if !wt.ClaudeSession {
-		return "NONE"
-	}
-	if wt.ClaudeStale {
-		return "STALE"
-	}
-	return "ACTIVE"
+	return string(wt.Insights.Status)
 }
 
 func printJSON(worktrees []tui.Worktree) error {

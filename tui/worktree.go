@@ -5,11 +5,9 @@ import (
 )
 
 type Worktree struct {
-	Path          string
-	Branch        string
-	RelativePath  string
-	IsMain        bool
-	ClaudeSession bool
-	ClaudeStale   bool
-	Insights      agent.AgentStatus
+	Path         string
+	Branch       string
+	RelativePath string
+	IsMain       bool
+	Insights     agent.AgentStatus
 }

@@ -79,10 +79,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case time.Time:
 		m.tick = msg
 		for i := range m.worktrees {
-			m.worktrees[i].ClaudeSession, m.worktrees[i].ClaudeStale = agent.CheckSession(m.worktrees[i].Path)
-		}
-		if m.cursor < len(m.worktrees) {
-			m.worktrees[m.cursor].Insights = agent.GetInsights(m.worktrees[m.cursor].Path)
+			m.worktrees[i].Insights = agent.GetInsights(m.worktrees[i].Path)
 		}
 		return m, tea.Tick(tickInterval, func(t time.Time) tea.Msg {
 			return t
@@ -216,12 +213,7 @@ func renderWorktreeRow(m model, idx int, width int) string {
 	checkbox := "[ ] "
 	pathVal := trunc(wt.RelativePath, pathW)
 	branchVal := trunc(wt.Branch, branchW)
-	sessionVal := "[NONE]"
-	if wt.ClaudeSession {
-		sessionVal = "[ACTIVE]"
-	} else if wt.ClaudeStale {
-		sessionVal = "[STALE]"
-	}
+	sessionVal := "[" + string(wt.Insights.Status) + "]"
 
 	if m.cursor == idx {
 		checkbox = selectedStyle.Render("[*] ")
@@ -232,11 +224,14 @@ func renderWorktreeRow(m model, idx int, width int) string {
 		checkbox = dimStyle.Render(checkbox)
 		pathVal = dimStyle.Width(pathW).Render(pathVal)
 		branchVal = dimStyle.Width(branchW).Render(branchVal)
-		if wt.ClaudeSession {
-			sessionVal = activeStyle.Width(sessionW).Render(sessionVal)
-		} else if wt.ClaudeStale {
+		switch wt.Insights.Status {
+		case agent.StatusWorking:
 			sessionVal = workingStyle.Width(sessionW).Render(sessionVal)
-		} else {
+		case agent.StatusWait:
+			sessionVal = waitingStyle.Width(sessionW).Render(sessionVal)
+		case agent.StatusIdle:
+			sessionVal = activeStyle.Width(sessionW).Render(sessionVal)
+		default:
 			sessionVal = noneStyle.Width(sessionW).Render(sessionVal)
 		}
 	}

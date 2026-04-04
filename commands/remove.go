@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/moosecode/mori/agent"
+	"github.com/moosecode/mori/tui"
 )
 
 func Remove(branch string, force bool) error {
@@ -16,33 +17,28 @@ func Remove(branch string, force bool) error {
 		return err
 	}
 
-	var targetPath string
-	var isMain bool
-	found := false
-	for _, wt := range worktrees {
-		if wt.Branch == branch {
-			targetPath = wt.Path
-			isMain = wt.IsMain
-			found = true
+	var target *tui.Worktree
+	for i := range worktrees {
+		if worktrees[i].Branch == branch {
+			target = &worktrees[i]
 			break
 		}
 	}
 
-	if !found {
+	if target == nil {
 		return fmt.Errorf("no worktree found for branch '%s'", branch)
 	}
 
-	if isMain {
+	if target.IsMain {
 		return fmt.Errorf("cannot remove the main worktree")
 	}
 
 	if !force {
-		hasSession, stale := agent.CheckSession(targetPath)
-		if hasSession && !stale {
-			return fmt.Errorf("worktree '%s' has an active Claude session. Use --force to remove anyway", branch)
+		if target.Insights.Status == agent.StatusWorking || target.Insights.Status == agent.StatusWait {
+			return fmt.Errorf("worktree '%s' has an active Claude session (%s). Use --force to remove anyway", branch, target.Insights.Status)
 		}
 
-		out, _ := exec.Command("git", "-C", targetPath, "status", "--porcelain").Output()
+		out, _ := exec.Command("git", "-C", target.Path, "status", "--porcelain").Output()
 		if len(strings.TrimSpace(string(out))) > 0 {
 			fmt.Fprintf(os.Stderr, "Warning: worktree '%s' has uncommitted changes.\n", branch)
 			fmt.Fprintf(os.Stderr, "Remove anyway? [y/N] ")
@@ -56,9 +52,9 @@ func Remove(branch string, force bool) error {
 
 	fmt.Fprintf(os.Stderr, "Removing worktree '%s'... ", branch)
 
-	args := []string{"worktree", "remove", targetPath}
+	args := []string{"worktree", "remove", target.Path}
 	if force {
-		args = []string{"worktree", "remove", "--force", targetPath}
+		args = []string{"worktree", "remove", "--force", target.Path}
 	}
 
 	if err := exec.Command("git", args...).Run(); err != nil {
