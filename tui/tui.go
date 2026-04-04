@@ -78,7 +78,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	case time.Time:
 		m.tick = msg
-		if m.cursor < len(m.worktrees) && m.worktrees[m.cursor].Insights.Available {
+		for i := range m.worktrees {
+			m.worktrees[i].ClaudeSession, m.worktrees[i].ClaudeStale = agent.CheckSession(m.worktrees[i].Path)
+		}
+		if m.cursor < len(m.worktrees) {
 			m.worktrees[m.cursor].Insights = agent.GetInsights(m.worktrees[m.cursor].Path)
 		}
 		return m, tea.Tick(tickInterval, func(t time.Time) tea.Msg {
