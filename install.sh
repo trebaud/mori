@@ -50,7 +50,7 @@ fi
 
 WT_FUNC="
 $BIN_NAME() {
-    local target_dir=\$(\"$BIN_NAME\")
+    local target_dir=\$(\"$BIN_NAME\" \"\$@\")
     if [ -d \"\$target_dir\" ]; then
         cd \"\$target_dir\"
     fi

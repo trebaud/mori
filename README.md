@@ -43,11 +43,45 @@ mori() {
 ## Usage
 
 ```bash
-mori                    # Launch the TUI
-mori -create            # Create a new worktree
-mori -create -b feat    # Create worktree with branch name
-mori -create -c         # Create and launch Claude Code in it
+mori                        # Launch the TUI
+mori new                    # Create a new worktree (random branch)
+mori new feat               # Create worktree with branch name "feat"
+mori new feat --claude      # Create and launch Claude Code in it
+mori new feat --repo /path  # Create in a specific repo
+mori list                   # List worktrees (table)
+mori list --json            # List worktrees (JSON)
+mori remove feat            # Remove a worktree
+mori remove feat --force    # Remove without confirmation
 ```
+
+### Commands
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `mori` | | Launch interactive TUI |
+| `mori new [branch]` | | Create a new worktree |
+| `mori list` | `ls` | List worktrees non-interactively |
+| `mori remove <branch>` | `rm` | Remove a worktree |
+| `mori help` | | Show help |
+| `mori version` | | Show version |
+
+### Flags
+
+**new:**
+| Flag | Description |
+|------|-------------|
+| `-c`, `--claude` | Launch Claude Code after creating |
+| `-r`, `--repo PATH` | Repository root (default: current directory) |
+
+**remove:**
+| Flag | Description |
+|------|-------------|
+| `-f`, `--force` | Skip confirmation prompts |
+
+**list:**
+| Flag | Description |
+|------|-------------|
+| `--json` | Output as JSON |
 
 ### Keybindings
 
