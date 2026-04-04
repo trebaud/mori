@@ -6,11 +6,13 @@ A TUI for managing git worktrees with Claude Code agent insights.
 
 ## Features
 
-- Browse and switch between git worktrees
-- Claude Code session detection (ACTIVE / STALE / NONE)
-- Agent insights panel: status, session, cost, context pressure, current task, git log
-- Auto-refresh every 5 seconds
-- Shell integration — selecting a worktree `cd`s you into it
+- Browse, create, and delete git worktrees without leaving the TUI
+- Side-by-side worktree list + agent insights panel
+- Session status tracking: WORKING, IDLE, WAITING, NONE
+- Per-worktree insights: cost, context usage, current task, git log, ahead/behind
+- Search/filter (`/`) and sort (`s`) worktrees
+- Adaptive refresh: 2s when agents are active, 10s when idle
+- Selecting a worktree `cd`s into it via shell wrapper
 
 ## Install
 
@@ -43,15 +45,16 @@ mori() {
 ## Usage
 
 ```bash
-mori                        # Launch the TUI
-mori new                    # Create a new worktree (random branch)
-mori new feat               # Create worktree with branch name "feat"
-mori new feat --claude      # Create and launch Claude Code in it
-mori new feat --repo /path  # Create in a specific repo
-mori list                   # List worktrees (table)
-mori list --json            # List worktrees (JSON)
-mori remove feat            # Remove a worktree
-mori remove feat --force    # Remove without confirmation
+mori                           # Launch the TUI
+mori new                       # Create a new worktree (random branch)
+mori new feat --claude         # Create and launch Claude Code in it
+mori open feat                 # Switch to worktree by branch name
+mori list                      # List worktrees (table)
+mori list --json               # List with full insights as JSON
+mori list --status working     # Filter by agent status
+mori status                    # One-line summary of all worktrees
+mori remove feat               # Remove a worktree
+mori remove feat --force       # Remove without confirmation
 ```
 
 ### Commands
@@ -60,7 +63,9 @@ mori remove feat --force    # Remove without confirmation
 |---------|-------|-------------|
 | `mori` | | Launch interactive TUI |
 | `mori new [branch]` | | Create a new worktree |
+| `mori open <branch>` | | Switch to worktree by name |
 | `mori list` | `ls` | List worktrees non-interactively |
+| `mori status` | | Show worktree summary |
 | `mori remove <branch>` | `rm` | Remove a worktree |
 | `mori help` | | Show help |
 | `mori version` | | Show version |
@@ -73,23 +78,30 @@ mori remove feat --force    # Remove without confirmation
 | `-c`, `--claude` | Launch Claude Code after creating |
 | `-r`, `--repo PATH` | Repository root (default: current directory) |
 
+**list:**
+| Flag | Description |
+|------|-------------|
+| `--json` | Output as JSON (includes cost, model, task, etc.) |
+| `--status STATUS` | Filter by status (working, idle, waiting, none) |
+
 **remove:**
 | Flag | Description |
 |------|-------------|
 | `-f`, `--force` | Skip confirmation prompts |
 
-**list:**
-| Flag | Description |
-|------|-------------|
-| `--json` | Output as JSON |
-
-### Keybindings
+### TUI Keybindings
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` or `↑` / `↓` | Navigate |
+| `j`/`k`, `↑`/`↓` | Navigate |
 | `Enter` | Select worktree and cd into it |
-| `i` | Toggle agent insights panel |
+| `i` | Toggle insights panel |
+| `n` | Create new worktree |
+| `d` / `D` | Delete worktree / force delete |
+| `/` | Filter by branch or path |
+| `s` | Cycle sort (status / activity / name) |
+| `r` | Refresh now |
+| `?` | Show all keybindings |
 | `q` | Quit |
 
 ### Agent Insights
@@ -99,10 +111,12 @@ Press `i` to see details for the selected worktree:
 ```
  AGENT INSIGHTS
 ────────────────────────────────────────────────────────
-STATUS:      [WORKING]
-SESSION:     c43dee9c
+STATUS:      ● [WORKING] Bash
+SESSION:     cozy-gathering-iverson
+MODEL:       opus / acceptEdits
 COST:        $1.42
-CONTEXT:     [██████░░░░] 62%
+CONTEXT:     [██████░░░░] 62% (124k/200k)
+BRANCH:      +3/-0
 TASK:
   Refactor JWT middleware to use the new Redis cache.
 
@@ -110,6 +124,8 @@ GIT LOG
   • 10 minutes ago: fix: cache miss on init
   • 1 hour ago: feat: add redis layer
 ```
+
+On wide terminals (120+), insights display side-by-side with the worktree list.
 
 ## Requirements
 
