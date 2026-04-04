@@ -25,7 +25,13 @@ type AgentStatus struct {
 	SessionSize   int64
 	CurrentTask   string
 	SessionID     string
+	Slug          string
+	Model         string
+	Mode          string
+	LastTool      string
 	CostUSD       float64
+	TurnDurationS int
+	MessageCount  int
 	GitLog        []string
 	Available     bool
 }
@@ -76,84 +82,179 @@ func GetInsights(worktreePath string) AgentStatus {
 		sessionSize = info.Size()
 	}
 
-	lastLine := readLastLine(newestFile)
-	status := StatusIdle
-	task := ""
-
-	if lastLine != "" {
-		status = parseStatusFromLine(lastLine)
-		task = extractTaskFromLine(lastLine)
-	}
-
 	sessionID := strings.TrimSuffix(filepath.Base(newestFile), ".jsonl")
-	cost := computeCost(newestFile)
+	parsed := scanSession(newestFile)
 
 	return AgentStatus{
-		Status:       status,
-		LastActivity: newestModTime,
-		SessionSize:  sessionSize,
-		CurrentTask:  task,
-		SessionID:    sessionID,
-		CostUSD:      cost,
-		GitLog:       getGitLog(worktreePath),
-		Available:    true,
+		Status:        parsed.status,
+		LastActivity:  newestModTime,
+		SessionSize:   sessionSize,
+		CurrentTask:   parsed.task,
+		SessionID:     sessionID,
+		Slug:          parsed.slug,
+		Model:         parsed.model,
+		Mode:          parsed.mode,
+		LastTool:      parsed.lastTool,
+		CostUSD:       parsed.cost,
+		TurnDurationS: parsed.turnDurationS,
+		MessageCount:  parsed.messageCount,
+		GitLog:        getGitLog(worktreePath),
+		Available:     true,
 	}
 }
 
-func readLastLine(path string) string {
+type sessionData struct {
+	status        AgentStatusType
+	task          string
+	slug          string
+	model         string
+	mode          string
+	lastTool      string
+	cost          float64
+	turnDurationS int
+	messageCount  int
+}
+
+func scanSession(path string) sessionData {
 	file, err := os.Open(path)
 	if err != nil {
-		return ""
+		return sessionData{status: StatusIdle}
 	}
 	defer file.Close()
 
+	var result sessionData
+	var lastType string
 	var lastLine string
+	var lastUserTask string
+
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	var entry struct {
+		Type    string `json:"type"`
+		Subtype string `json:"subtype"`
+		Slug    string `json:"slug"`
+		Message struct {
+			Model   string `json:"model"`
+			Role    string `json:"role"`
+			Content json.RawMessage `json:"content"`
+			Usage   struct {
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			} `json:"usage"`
+		} `json:"message"`
+		PermissionMode string `json:"permissionMode"`
+		DurationMs     int    `json:"durationMs"`
+		MessageCount   int    `json:"messageCount"`
+	}
+
 	for scanner.Scan() {
 		lastLine = scanner.Text()
-	}
-	return lastLine
-}
+		if err := json.Unmarshal([]byte(lastLine), &entry); err != nil {
+			continue
+		}
 
-func parseStatusFromLine(line string) AgentStatusType {
-	var entry struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal([]byte(line), &entry); err != nil {
-		return StatusIdle
+		lastType = entry.Type
+
+		if entry.Slug != "" {
+			result.slug = entry.Slug
+		}
+
+		switch entry.Type {
+		case "permission-mode":
+			if entry.PermissionMode != "" {
+				result.mode = entry.PermissionMode
+			}
+		case "user":
+			if entry.PermissionMode != "" {
+				result.mode = entry.PermissionMode
+			}
+			// Extract user prompt as task
+			text := extractTextFromContent(entry.Message.Content)
+			if text != "" {
+				lastUserTask = text
+			}
+		case "assistant":
+			if entry.Message.Model != "" {
+				result.model = entry.Message.Model
+			}
+			// Check for tool use
+			result.lastTool = extractToolName(entry.Message.Content)
+			// Accumulate cost
+			p := pricing[modelTier(entry.Message.Model)]
+			u := entry.Message.Usage
+			result.cost += float64(u.InputTokens) * p.input / 1_000_000
+			result.cost += float64(u.OutputTokens) * p.output / 1_000_000
+			result.cost += float64(u.CacheCreationInputTokens) * p.cacheWrite / 1_000_000
+			result.cost += float64(u.CacheReadInputTokens) * p.cacheRead / 1_000_000
+		case "system":
+			if entry.Subtype == "turn_duration" {
+				result.turnDurationS = entry.DurationMs / 1000
+				result.messageCount = entry.MessageCount
+			}
+		}
 	}
 
-	switch entry.Type {
+	// Set task from the most recent user prompt
+	if lastUserTask != "" {
+		if len(lastUserTask) > 80 {
+			result.task = lastUserTask[:80] + "..."
+		} else {
+			result.task = lastUserTask
+		}
+	}
+
+	// Determine status from last entry type
+	switch lastType {
 	case "user":
-		return StatusWorking
+		result.status = StatusWorking
 	case "assistant":
-		if strings.Contains(line, "AskUserQuestion") {
-			return StatusWait
+		if strings.Contains(lastLine, "AskUserQuestion") {
+			result.status = StatusWait
+		} else {
+			result.status = StatusIdle
 		}
-		return StatusIdle
 	default:
-		return StatusIdle
+		result.status = StatusIdle
 	}
+
+	return result
 }
 
-func extractTaskFromLine(line string) string {
-	var entry struct {
-		Message struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"message"`
+func extractTextFromContent(raw json.RawMessage) string {
+	// Try as string first (user messages)
+	var s string
+	if json.Unmarshal(raw, &s) == nil && s != "" {
+		return s
 	}
-	if err := json.Unmarshal([]byte(line), &entry); err != nil {
-		return ""
+	// Try as array of content blocks
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
 	}
-
-	if len(entry.Message.Content) > 0 && len(entry.Message.Content[0].Text) > 0 {
-		text := entry.Message.Content[0].Text
-		if len(text) > 60 {
-			return text[:60] + "..."
+	if json.Unmarshal(raw, &blocks) == nil {
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				return b.Text
+			}
 		}
-		return text
+	}
+	return ""
+}
+
+func extractToolName(raw json.RawMessage) string {
+	var blocks []struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		for i := len(blocks) - 1; i >= 0; i-- {
+			if blocks[i].Type == "tool_use" && blocks[i].Name != "" {
+				return blocks[i].Name
+			}
+		}
 	}
 	return ""
 }
@@ -181,48 +282,6 @@ func modelTier(model string) string {
 		return "haiku"
 	}
 	return "sonnet"
-}
-
-func computeCost(path string) float64 {
-	file, err := os.Open(path)
-	if err != nil {
-		return 0
-	}
-	defer file.Close()
-
-	var total float64
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-
-	var entry struct {
-		Type    string `json:"type"`
-		Message struct {
-			Model string `json:"model"`
-			Usage struct {
-				InputTokens              int `json:"input_tokens"`
-				OutputTokens             int `json:"output_tokens"`
-				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-			} `json:"usage"`
-		} `json:"message"`
-	}
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if err := json.Unmarshal(line, &entry); err != nil {
-			continue
-		}
-		if entry.Type != "assistant" {
-			continue
-		}
-		p := pricing[modelTier(entry.Message.Model)]
-		u := entry.Message.Usage
-		total += float64(u.InputTokens) * p.input / 1_000_000
-		total += float64(u.OutputTokens) * p.output / 1_000_000
-		total += float64(u.CacheCreationInputTokens) * p.cacheWrite / 1_000_000
-		total += float64(u.CacheReadInputTokens) * p.cacheRead / 1_000_000
-	}
-	return total
 }
 
 func getGitLog(worktreePath string) []string {

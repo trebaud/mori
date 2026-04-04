@@ -266,25 +266,59 @@ func renderInsightsPanel(m model) string {
 		statusStyle = activeStyle
 	}
 
-	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("STATUS:"), statusStyle.Render("["+statusStr+"]")))
-
-	sessionID := wt.Insights.SessionID
-	if sessionID == "" {
-		sessionID = "—"
-	} else if len(sessionID) > 8 {
-		sessionID = sessionID[:8]
+	// Status + last tool
+	statusLine := "[" + statusStr + "]"
+	if wt.Insights.LastTool != "" && wt.Insights.Status == agent.StatusWorking {
+		statusLine += " " + dimStyle.Render(wt.Insights.LastTool)
 	}
-	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("SESSION:"), dimStyle.Render(sessionID)))
+	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("STATUS:"), statusStyle.Render(statusLine)))
 
+	// Session slug (or truncated UUID fallback)
+	session := wt.Insights.Slug
+	if session == "" {
+		session = wt.Insights.SessionID
+		if len(session) > 8 {
+			session = session[:8]
+		}
+	}
+	if session == "" {
+		session = "—"
+	}
+	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("SESSION:"), dimStyle.Render(session)))
+
+	// Model + Mode on one line
+	model := wt.Insights.Model
+	if model != "" {
+		model = modelShort(model)
+	}
+	mode := wt.Insights.Mode
+	if mode == "" {
+		mode = "—"
+	}
+	modelMode := mode
+	if model != "" {
+		modelMode = model + " / " + mode
+	}
+	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("MODEL:"), dimStyle.Render(modelMode)))
+
+	// Cost
 	costStr := "—"
 	if wt.Insights.CostUSD > 0 {
 		costStr = fmt.Sprintf("$%.2f", wt.Insights.CostUSD)
 	}
 	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("COST:"), dimStyle.Render(costStr)))
 
+	// Context bar
 	contextBar := renderContextBar(wt.Insights.SessionSize)
 	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("CONTEXT:"), contextBar))
 
+	// Turn stats
+	if wt.Insights.TurnDurationS > 0 || wt.Insights.MessageCount > 0 {
+		turnStr := fmt.Sprintf("%ds / %d msgs", wt.Insights.TurnDurationS, wt.Insights.MessageCount)
+		s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("TURN:"), dimStyle.Render(turnStr)))
+	}
+
+	// Task (from most recent user prompt)
 	task := wt.Insights.CurrentTask
 	if task == "" {
 		task = "—"
@@ -334,6 +368,18 @@ func wrapText(text string, width int) []string {
 	}
 
 	return lines
+}
+
+func modelShort(model string) string {
+	m := strings.ToLower(model)
+	switch {
+	case strings.Contains(m, "opus"):
+		return "opus"
+	case strings.Contains(m, "haiku"):
+		return "haiku"
+	default:
+		return "sonnet"
+	}
 }
 
 func renderContextBar(size int64) string {
