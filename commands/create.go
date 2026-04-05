@@ -99,7 +99,7 @@ func repoHasCommits(repo string) (bool, error) {
 func createWorktree(repo, branch string, launchClaude bool) error {
 	worktreeDir := filepath.Join(repo, ".claude", "worktrees", branch)
 
-	fmt.Fprintf(os.Stderr, "\033[1;35m  Creating worktree %s\033[0m\n\n", branch)
+	fmt.Fprintf(os.Stderr, "\n  \033[1;35m◆ %s\033[0m\n\n", branch)
 
 	if hasCommits, err := repoHasCommits(repo); err != nil || !hasCommits {
 		fmt.Fprintf(os.Stderr, "    Checking for commits... \033[1;31m✖\033[0m\n")
@@ -124,7 +124,6 @@ func createWorktree(repo, branch string, launchClaude bool) error {
 		setupWorktree(worktreeDir, cfg.PostCreate)
 	}
 
-	fmt.Fprintf(os.Stderr, "\n\033[1;32m  Done!\033[0m\n")
 	fmt.Fprintf(os.Stderr, "\n  \033[0;90mcd %s\033[0m\n\n", worktreeDir)
 
 	fmt.Print(worktreeDir)
@@ -138,8 +137,6 @@ func createWorktree(repo, branch string, launchClaude bool) error {
 }
 
 func setupWorktree(worktreeDir string, steps []config.Step) {
-	fmt.Fprintf(os.Stderr, "\033[0;36m\n    Setting up worktree\033[0m\n")
-
 	for _, step := range steps {
 		fmt.Fprintf(os.Stderr, "    %s... ", step.Name)
 		cmd := exec.Command("sh", "-c", step.Cmd)

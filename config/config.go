@@ -16,7 +16,7 @@ type Config struct {
 	PostCreate []Step `json:"post_create"`
 }
 
-// Load reads config from ~/.mori/settings.json (global) and {repoRoot}/.mori (project).
+// Load reads config from ~/.mori/settings.json (global) and {repoRoot}/.mori.json (project).
 // Project config replaces global entirely for post_create commands.
 func Load(repoRoot string) Config {
 	var cfg Config
@@ -31,7 +31,7 @@ func Load(repoRoot string) Config {
 
 	// Project config (replaces global)
 	if repoRoot != "" {
-		projectPath := filepath.Join(repoRoot, ".mori")
+		projectPath := filepath.Join(repoRoot, ".mori.json")
 		if parsed, ok := readConfig(projectPath); ok && parsed.PostCreate != nil {
 			cfg.PostCreate = parsed.PostCreate
 		}
