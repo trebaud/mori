@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/moosecode/mori/agent"
+	"github.com/moosecode/mori/config"
 )
 
 const (
@@ -425,7 +426,8 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 
 func (m model) createWorktreeCmd(branch string) tea.Cmd {
 	return func() tea.Msg {
-		args := []string{"-C", m.findRepoRoot(), "worktree", "add"}
+		repoRoot := m.findRepoRoot()
+		args := []string{"-C", repoRoot, "worktree", "add"}
 		if branch == "" {
 			branch = "wt-" + randomSuffix()
 		}
@@ -435,12 +437,20 @@ func (m model) createWorktreeCmd(branch string) tea.Cmd {
 			mainBranch = "main"
 		}
 
-		worktreeDir := m.findRepoRoot() + "/.claude/worktrees/" + branch
+		worktreeDir := repoRoot + "/.claude/worktrees/" + branch
 		args = append(args, worktreeDir, "-b", branch, mainBranch)
 
 		if err := exec.Command("git", args...).Run(); err != nil {
 			return worktreeCreatedMsg{err: fmt.Errorf("git worktree add failed: %w", err)}
 		}
+
+		cfg := config.Load(repoRoot)
+		for _, step := range cfg.PostCreate {
+			cmd := exec.Command("sh", "-c", step.Cmd)
+			cmd.Dir = worktreeDir
+			cmd.Run()
+		}
+
 		return worktreeCreatedMsg{}
 	}
 }

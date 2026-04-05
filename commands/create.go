@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/moosecode/mori/config"
 )
 
 type CreateOptions struct {
@@ -117,7 +119,10 @@ func createWorktree(repo, branch string, launchClaude bool) error {
 	}
 	fmt.Fprintf(os.Stderr, "\033[1;32m✔\033[0m\n")
 
-	setupWorktree(worktreeDir)
+	cfg := config.Load(repo)
+	if len(cfg.PostCreate) > 0 {
+		setupWorktree(worktreeDir, cfg.PostCreate)
+	}
 
 	fmt.Fprintf(os.Stderr, "\n\033[1;32m  Done!\033[0m\n")
 	fmt.Fprintf(os.Stderr, "\n  \033[0;90mcd %s\033[0m\n\n", worktreeDir)
@@ -132,18 +137,14 @@ func createWorktree(repo, branch string, launchClaude bool) error {
 	return nil
 }
 
-func setupWorktree(worktreeDir string) {
+func setupWorktree(worktreeDir string, steps []config.Step) {
 	fmt.Fprintf(os.Stderr, "\033[0;36m\n    Setting up worktree\033[0m\n")
 
-	for _, step := range []struct {
-		name string
-		cmd  *exec.Cmd
-	}{
-		{"Syncing submodules", exec.Command("git", "-C", worktreeDir, "submodule", "update", "--init", "--recursive")},
-		{"Installing dependencies", exec.Command("sh", "-c", fmt.Sprintf("cd %s && pnpm install --frozen-lockfile", worktreeDir))},
-	} {
-		fmt.Fprintf(os.Stderr, "    %s... ", step.name)
-		if err := step.cmd.Run(); err != nil {
+	for _, step := range steps {
+		fmt.Fprintf(os.Stderr, "    %s... ", step.Name)
+		cmd := exec.Command("sh", "-c", step.Cmd)
+		cmd.Dir = worktreeDir
+		if err := cmd.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "\033[1;33m⚠\033[0m\n")
 		} else {
 			fmt.Fprintf(os.Stderr, "\033[1;32m✔\033[0m\n")
