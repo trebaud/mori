@@ -127,6 +127,28 @@ GIT LOG
 
 On wide terminals (120+), insights display side-by-side with the worktree list.
 
+## Configuration
+
+Mori supports global and per-project configuration.
+
+- **Global:** `~/.mori/settings.json`
+- **Project:** `.mori.json` in the repo root (overrides global)
+
+### Post-create hooks
+
+Run commands automatically after creating a worktree (e.g. install dependencies, copy env files):
+
+```json
+{
+  "post_create": [
+    { "name": "Installing dependencies", "cmd": "npm install" },
+    { "name": "Copying env", "cmd": "cp ../.env .env" }
+  ]
+}
+```
+
+Each step runs in the new worktree directory. A failing step prints a warning but doesn't block the rest.
+
 ## Requirements
 
 - Go 1.21+
