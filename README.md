@@ -21,7 +21,7 @@ A TUI for managing git worktrees with Claude Code agent insights.
 ```bash
 git clone https://github.com/moosecode/mori.git
 cd mori
-./install.sh
+./scripts/install.sh
 ```
 
 This builds the binary and installs it to your PATH.
