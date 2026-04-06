@@ -65,7 +65,7 @@ func createWorktree(repo, branch string, launchClaude bool) error {
 		return fmt.Errorf("repository has no commits, cannot create worktree. Make at least one commit first")
 	}
 
-	mainBranch := gitutil.GetMainBranch(repo)
+	mainBranch := gitutil.GetDefaultBranch(repo)
 
 	fmt.Fprintf(os.Stderr, "    Creating branch from %s... ", mainBranch)
 

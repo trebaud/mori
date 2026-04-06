@@ -40,34 +40,6 @@ func FindMainRepo(path string) (string, error) {
 	return filepath.Dir(gitCommon), nil
 }
 
-// GetMainBranch determines the primary branch of a repository using multiple fallback strategies.
-func GetMainBranch(repo string) string {
-	// Try the current branch of the main repo
-	out, err := exec.Command("git", "-C", repo, "branch", "--show-current").Output()
-	if err == nil {
-		branch := strings.TrimSpace(string(out))
-		if branch != "" {
-			return branch
-		}
-	}
-
-	// Try origin/HEAD
-	if branch := GetDefaultBranch(repo); branch != "main" {
-		return branch
-	}
-
-	// Try HEAD
-	out, err = exec.Command("git", "-C", repo, "rev-parse", "--abbrev-ref", "HEAD").Output()
-	if err == nil {
-		branch := strings.TrimSpace(string(out))
-		if branch != "HEAD" {
-			return branch
-		}
-	}
-
-	return "main"
-}
-
 // GetDefaultBranch returns the repository's default branch name (e.g. "main" or "master")
 // by checking origin/HEAD, then probing for common branch names.
 func GetDefaultBranch(repo string) string {

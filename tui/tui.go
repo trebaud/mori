@@ -440,7 +440,7 @@ func (m model) createWorktreeCmd(branch string) tea.Cmd {
 			branch = "wt-" + gitutil.RandomSuffix()
 		}
 
-		mainBranch := gitutil.GetMainBranch(repoRoot)
+		mainBranch := gitutil.GetDefaultBranch(repoRoot)
 
 		worktreeDir := repoRoot + "/.claude/worktrees/" + branch
 		args = append(args, worktreeDir, "-b", branch, mainBranch)
