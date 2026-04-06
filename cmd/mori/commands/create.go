@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/moosecode/mori/internal"
 	"github.com/moosecode/mori/internal/git"
@@ -41,65 +40,29 @@ func Create(opts CreateOptions) error {
 		branch = "wt-" + internal.RandomSuffix()
 	}
 
-	return createWorktree(absRepo, branch, opts.LaunchClaude)
-}
-
-func repoHasCommits(repo string) (bool, error) {
-	out, err := exec.Command("git", "-C", repo, "rev-list", "--count", "HEAD").Output()
-	if err != nil {
-		return false, nil
-	}
-	return strings.TrimSpace(string(out)) != "0", nil
-}
-
-func createWorktree(repo, branch string, launchClaude bool) error {
-	worktreeDir := filepath.Join(repo, ".claude", "worktrees", branch)
-
 	fmt.Fprintf(os.Stderr, "\n  \033[1;35m◆ %s\033[0m\n\n", branch)
 
-	if hasCommits, err := repoHasCommits(repo); err != nil || !hasCommits {
-		fmt.Fprintf(os.Stderr, "    Checking for commits... \033[1;31m✖\033[0m\n")
-		if err != nil {
-			return fmt.Errorf("failed to check repo: %w", err)
+	result, err := internal.CreateWorktree(absRepo, branch)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "    \033[1;31m✖\033[0m %v\n", err)
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "    Creating branch from %s... \033[1;32m✔\033[0m\n", result.BaseBranch)
+	for _, hr := range result.HookResults {
+		if hr.Success {
+			fmt.Fprintf(os.Stderr, "    %s... \033[1;32m✔\033[0m\n", hr.Name)
+		} else {
+			fmt.Fprintf(os.Stderr, "    %s... \033[1;33m⚠\033[0m\n", hr.Name)
 		}
-		return fmt.Errorf("repository has no commits, cannot create worktree. Make at least one commit first")
 	}
 
-	mainBranch := git.DefaultBranch(repo)
+	fmt.Fprintf(os.Stderr, "\n  \033[0;90m%s\033[0m\n\n", result.Dir)
 
-	fmt.Fprintf(os.Stderr, "    Creating branch from %s... ", mainBranch)
-
-	if err := exec.Command("git", "-C", repo, "worktree", "add", worktreeDir, "-b", branch, mainBranch).Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "\033[1;31m✖\033[0m\n")
-		return fmt.Errorf("failed to create worktree: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "\033[1;32m✔\033[0m\n")
-
-	cfg := internal.Load(repo)
-	if len(cfg.PostCreate) > 0 {
-		setupWorktree(worktreeDir, cfg.PostCreate)
-	}
-
-	fmt.Fprintf(os.Stderr, "\n  \033[0;90m%s\033[0m\n\n", worktreeDir)
-
-	if launchClaude {
+	if opts.LaunchClaude {
 		fmt.Fprintf(os.Stderr, "\n\033[0;36m  Launching Claude Code...\033[0m\n")
 		exec.Command("claude", "--worktree", branch).Run()
 	}
 
 	return nil
 }
-
-func setupWorktree(worktreeDir string, steps []internal.Step) {
-	for _, step := range steps {
-		fmt.Fprintf(os.Stderr, "    %s... ", step.Name)
-		cmd := exec.Command("sh", "-c", step.Cmd)
-		cmd.Dir = worktreeDir
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "\033[1;33m⚠\033[0m\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "\033[1;32m✔\033[0m\n")
-		}
-	}
-}
-

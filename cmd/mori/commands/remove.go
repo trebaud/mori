@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/moosecode/mori/internal"
 	"github.com/moosecode/mori/internal/agent"
+	"github.com/moosecode/mori/internal/git"
 )
 
 func Remove(branch string, force bool) error {
@@ -31,8 +31,7 @@ func Remove(branch string, force bool) error {
 			return fmt.Errorf("worktree '%s' has an active Claude session (%s). Use --force to remove anyway", branch, target.Insights.Status)
 		}
 
-		out, _ := exec.Command("git", "-C", target.Path, "status", "--porcelain").Output()
-		if len(strings.TrimSpace(string(out))) > 0 {
+		if git.HasUncommittedChanges(target.Path) {
 			fmt.Fprintf(os.Stderr, "Warning: worktree '%s' has uncommitted changes.\n", branch)
 			fmt.Fprintf(os.Stderr, "Remove anyway? [y/N] ")
 			reader := bufio.NewReader(os.Stdin)
@@ -45,15 +44,9 @@ func Remove(branch string, force bool) error {
 
 	fmt.Fprintf(os.Stderr, "Removing worktree '%s'... ", branch)
 
-	args := []string{"worktree", "remove"}
-	if force {
-		args = append(args, "--force")
-	}
-	args = append(args, target.Path)
-
-	if err := exec.Command("git", args...).Run(); err != nil {
+	if err := internal.RemoveWorktree(target.Path, force); err != nil {
 		fmt.Fprintf(os.Stderr, "\033[1;31m✖\033[0m\n")
-		return fmt.Errorf("failed to remove worktree: %w", err)
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "\033[1;32m✔\033[0m\n")

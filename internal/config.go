@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
@@ -40,6 +41,27 @@ func Load(repoRoot string) Config {
 	return cfg
 }
 
+
+// HookResult records the outcome of a single post-create hook step.
+type HookResult struct {
+	Name    string
+	Success bool
+}
+
+// RunPostCreateHooks executes each post-create step in the given directory.
+// Returns results for all steps (both successes and failures).
+func RunPostCreateHooks(dir string, steps []Step) []HookResult {
+	var results []HookResult
+	for _, step := range steps {
+		cmd := exec.Command("sh", "-c", step.Cmd)
+		cmd.Dir = dir
+		results = append(results, HookResult{
+			Name:    step.Name,
+			Success: cmd.Run() == nil,
+		})
+	}
+	return results
+}
 
 func readConfig(path string) (Config, bool) {
 	data, err := os.ReadFile(path)

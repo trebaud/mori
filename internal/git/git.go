@@ -78,6 +78,36 @@ func WorktreeList() (string, error) {
 	return string(out), nil
 }
 
+// HasCommits returns true if the repo has at least one commit.
+func HasCommits(repo string) (bool, error) {
+	out, err := exec.Command("git", "-C", repo, "rev-list", "--count", "HEAD").Output()
+	if err != nil {
+		return false, nil
+	}
+	return strings.TrimSpace(string(out)) != "0", nil
+}
+
+// AddWorktree creates a new worktree at dir on a new branch based on baseBranch.
+func AddWorktree(repo, dir, branch, baseBranch string) error {
+	return exec.Command("git", "-C", repo, "worktree", "add", dir, "-b", branch, baseBranch).Run()
+}
+
+// RemoveWorktree removes a git worktree. If force is true, --force is passed.
+func RemoveWorktree(path string, force bool) error {
+	args := []string{"worktree", "remove"}
+	if force {
+		args = append(args, "--force")
+	}
+	args = append(args, path)
+	return exec.Command("git", args...).Run()
+}
+
+// HasUncommittedChanges returns true if the working directory has uncommitted changes.
+func HasUncommittedChanges(path string) bool {
+	out, _ := exec.Command("git", "-C", path, "status", "--porcelain").Output()
+	return len(strings.TrimSpace(string(out))) > 0
+}
+
 // AheadBehind returns a "+ahead/-behind" string relative to the default branch,
 // or an empty string if even or on error.
 func AheadBehind(repoPath string) string {

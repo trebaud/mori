@@ -3,7 +3,6 @@ package internal
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -430,42 +429,28 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 func (m model) createWorktreeCmd(branch string) tea.Cmd {
 	return func() tea.Msg {
 		repoRoot := m.findRepoRoot()
-		args := []string{"-C", repoRoot, "worktree", "add"}
 		if branch == "" {
 			branch = "wt-" + RandomSuffix()
 		}
 
-		mainBranch := git.DefaultBranch(repoRoot)
-
-		worktreeDir := repoRoot + "/.claude/worktrees/" + branch
-		args = append(args, worktreeDir, "-b", branch, mainBranch)
-
-		if err := exec.Command("git", args...).Run(); err != nil {
-			return worktreeCreatedMsg{err: fmt.Errorf("git worktree add failed: %w", err)}
+		result, err := CreateWorktree(repoRoot, branch)
+		if err != nil {
+			return worktreeCreatedMsg{err: err}
 		}
 
-		cfg := Load(repoRoot)
 		var warnings []string
-		for _, step := range cfg.PostCreate {
-			cmd := exec.Command("sh", "-c", step.Cmd)
-			cmd.Dir = worktreeDir
-			if err := cmd.Run(); err != nil {
-				warnings = append(warnings, step.Name)
+		for _, hr := range result.HookResults {
+			if !hr.Success {
+				warnings = append(warnings, hr.Name)
 			}
 		}
-
 		return worktreeCreatedMsg{warnings: warnings}
 	}
 }
 
 func (m model) removeWorktreeCmd(path string, force bool) tea.Cmd {
 	return func() tea.Msg {
-		args := []string{"worktree", "remove"}
-		if force {
-			args = append(args, "--force")
-		}
-		args = append(args, path)
-		if err := exec.Command("git", args...).Run(); err != nil {
+		if err := RemoveWorktree(path, force); err != nil {
 			return worktreeRemovedMsg{err: err}
 		}
 		return worktreeRemovedMsg{}
