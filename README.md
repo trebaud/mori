@@ -13,6 +13,7 @@ A TUI for managing git worktrees with Claude Code agent insights.
 - Search/filter (`/`) and sort (`s`) worktrees
 - Adaptive refresh: 2s when agents are active, 10s when idle
 - Selecting a worktree `cd`s into it via shell wrapper
+- Includes a [Claude Code skill](skill/SKILL.md) so Claude can manage worktrees for you
 
 ## Install
 
@@ -148,6 +149,27 @@ Run commands automatically after creating a worktree (e.g. install dependencies,
 ```
 
 Each step runs in the new worktree directory. A failing step prints a warning but doesn't block the rest.
+
+## Claude Code Skill
+
+Mori ships with a [Claude Code skill](skills/mori/SKILL.md) that teaches Claude how to use mori on your behalf. Install it by copying the skill into your skills directory:
+
+```bash
+cp -r skills/mori ~/.agents/skills/mori
+```
+
+Once installed, Claude can create worktrees, check agent status, and manage branches through natural conversation.
+
+### Parallel implementation workflows
+
+The skill is especially useful for orchestrating complex workflows. For example, you can ask Claude to spin up multiple worktrees to explore alternative implementations of the same feature in parallel:
+
+1. `mori new auth-approach-a --claude` — token-based auth
+2. `mori new auth-approach-b --claude` — session-based auth
+3. `mori list --status working` — monitor both agents as they work
+4. Compare the results side-by-side, then keep the best one and `mori remove` the rest
+
+This turns mori into a lightweight experimentation harness — run competing approaches simultaneously, track their cost and progress in real time, and converge on the winner.
 
 ## Requirements
 
