@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/moosecode/mori/agent"
 	"github.com/moosecode/mori/config"
+	gitutil "github.com/moosecode/mori/internal/git"
 )
 
 const (
@@ -76,7 +77,8 @@ type statusMsg struct {
 
 // worktreeCreatedMsg is sent when a worktree creation completes
 type worktreeCreatedMsg struct {
-	err error
+	err      error
+	warnings []string // post-create hook failures
 }
 
 // worktreeRemovedMsg is sent when a worktree removal completes
@@ -105,7 +107,8 @@ type model struct {
 	sortMode sortMode
 
 	// Delete confirmation
-	deleteTarget int // index in filtered list
+	deleteTarget int  // index in filtered list
+	forceDelete  bool // true when triggered by D key
 }
 
 func Run(worktrees []Worktree) {
@@ -255,6 +258,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case worktreeCreatedMsg:
 		if msg.err != nil {
 			m.statusMsg = &statusMsg{text: "Create failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
+		} else if len(msg.warnings) > 0 {
+			m.statusMsg = &statusMsg{text: "Created (warnings: " + strings.Join(msg.warnings, ", ") + ")", isError: true, expires: time.Now().Add(5 * time.Second)}
+			m.refreshWorktreeList()
 		} else {
 			m.statusMsg = &statusMsg{text: "Worktree created", expires: time.Now().Add(3 * time.Second)}
 			m.refreshWorktreeList()
@@ -339,6 +345,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			} else {
 				m.mode = modeConfirmDelete
 				m.deleteTarget = m.cursor
+				m.forceDelete = false
 			}
 		}
 	case "D":
@@ -348,6 +355,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			} else {
 				m.mode = modeConfirmDelete
 				m.deleteTarget = m.cursor
+				m.forceDelete = true
 			}
 		}
 	case "s":
@@ -415,7 +423,7 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 			wt := m.worktrees[m.filtered[m.deleteTarget]]
 			m.mode = modeNormal
 			m.statusMsg = &statusMsg{text: "Removing worktree...", expires: time.Now().Add(30 * time.Second)}
-			return m, m.removeWorktreeCmd(wt.Path)
+			return m, m.removeWorktreeCmd(wt.Path, m.forceDelete)
 		}
 		m.mode = modeNormal
 	case "n", "N", "esc", "ctrl+c":
@@ -429,13 +437,10 @@ func (m model) createWorktreeCmd(branch string) tea.Cmd {
 		repoRoot := m.findRepoRoot()
 		args := []string{"-C", repoRoot, "worktree", "add"}
 		if branch == "" {
-			branch = "wt-" + randomSuffix()
+			branch = "wt-" + gitutil.RandomSuffix()
 		}
 
-		mainBranch := m.currentBranch
-		if mainBranch == "" {
-			mainBranch = "main"
-		}
+		mainBranch := gitutil.GetMainBranch(repoRoot)
 
 		worktreeDir := repoRoot + "/.claude/worktrees/" + branch
 		args = append(args, worktreeDir, "-b", branch, mainBranch)
@@ -445,111 +450,45 @@ func (m model) createWorktreeCmd(branch string) tea.Cmd {
 		}
 
 		cfg := config.Load(repoRoot)
+		var warnings []string
 		for _, step := range cfg.PostCreate {
 			cmd := exec.Command("sh", "-c", step.Cmd)
 			cmd.Dir = worktreeDir
-			cmd.Run()
+			if err := cmd.Run(); err != nil {
+				warnings = append(warnings, step.Name)
+			}
 		}
 
-		return worktreeCreatedMsg{}
+		return worktreeCreatedMsg{warnings: warnings}
 	}
 }
 
-func (m model) removeWorktreeCmd(path string) tea.Cmd {
+func (m model) removeWorktreeCmd(path string, force bool) tea.Cmd {
 	return func() tea.Msg {
-		if err := exec.Command("git", "worktree", "remove", path).Run(); err != nil {
-			// Try force
-			if err2 := exec.Command("git", "worktree", "remove", "--force", path).Run(); err2 != nil {
-				return worktreeRemovedMsg{err: err2}
-			}
+		args := []string{"worktree", "remove", path}
+		if force {
+			args = []string{"worktree", "remove", "--force", path}
+		}
+		if err := exec.Command("git", args...).Run(); err != nil {
+			return worktreeRemovedMsg{err: err}
 		}
 		return worktreeRemovedMsg{}
 	}
 }
 
 func (m model) findRepoRoot() string {
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	root, err := gitutil.FindMainRepo(".")
 	if err != nil {
 		return "."
 	}
-	return strings.TrimSpace(string(out))
+	return root
 }
 
 func (m *model) refreshWorktreeList() {
-	if out, err := exec.Command("git", "worktree", "list", "--porcelain").Output(); err == nil {
-		// Re-parse worktrees
-		var wts []Worktree
-		var current Worktree
-
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.HasPrefix(line, "worktree ") {
-				if current.Path != "" {
-					wts = append(wts, current)
-				}
-				current = Worktree{Path: strings.TrimPrefix(line, "worktree ")}
-			} else if strings.HasPrefix(line, "branch ") {
-				parts := strings.Split(line, "/")
-				current.Branch = parts[len(parts)-1]
-				if current.Branch == m.currentBranch {
-					current.IsMain = true
-				}
-			}
-		}
-		if current.Path != "" {
-			wts = append(wts, current)
-		}
-
-		home, _ := os.UserHomeDir()
-		gitDir, _ := exec.Command("git", "rev-parse", "--git-dir").Output()
-		mainPath := ""
-		if len(gitDir) > 0 {
-			mainPath = strings.TrimSpace(string(gitDir))
-			if idx := strings.LastIndex(mainPath, "/"); idx >= 0 {
-				mainPath = mainPath[:idx]
-			}
-		}
-
-		for i := range wts {
-			wts[i].RelativePath = makeRelativePath(wts[i].Path, mainPath, home)
-			wts[i].Insights = agent.GetInsights(wts[i].Path)
-		}
-
+	if wts, err := ListWorktrees(); err == nil {
 		m.worktrees = wts
 		m.applyFilter()
 	}
-}
-
-func makeRelativePath(path, mainPath, home string) string {
-	rel := path
-	if home != "" && strings.HasPrefix(rel, home) {
-		rel = "~" + rel[len(home):]
-	}
-
-	parts := strings.Split(rel, "/")
-	if len(parts) > 0 {
-		name := parts[len(parts)-1]
-		if mainPath != "" && name == baseName(mainPath) {
-			return "./main"
-		}
-		return "./" + name
-	}
-	return rel
-}
-
-func baseName(path string) string {
-	parts := strings.Split(path, "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-	return path
-}
-
-func randomSuffix() string {
-	out, err := exec.Command("sh", "-c", "LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c5").Output()
-	if err != nil || len(string(out)) == 0 {
-		return fmt.Sprintf("%d", os.Getpid())
-	}
-	return string(out)
 }
 
 // --- View ---
@@ -890,7 +829,7 @@ func renderInsightsPanel(m model, width int) string {
 	// Model + Mode (hide default mode)
 	mdl := wt.Insights.Model
 	if mdl != "" {
-		mdl = modelShort(mdl)
+		mdl = agent.ModelTier(mdl)
 	}
 	mode := wt.Insights.Mode
 	modelMode := "—"
@@ -912,11 +851,16 @@ func renderInsightsPanel(m model, width int) string {
 
 	// Context bar — use input tokens if available, fall back to file size
 	if wt.Insights.InputTokens > 0 {
-		contextBar := renderContextBarTokens(wt.Insights.InputTokens)
-		s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("CONTEXT:"), contextBar))
+		maxTokens := contextMaxTokens(wt.Insights.Model)
+		percent := float64(wt.Insights.InputTokens) / float64(maxTokens)
+		tokenK := wt.Insights.InputTokens / 1000
+		label := fmt.Sprintf("%d%% (%dk/%dk)", int(percent*100), tokenK, maxTokens/1000)
+		s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("CONTEXT:"), renderContextBar(percent, label)))
 	} else {
-		contextBar := renderContextBar(wt.Insights.SessionSize)
-		s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("CONTEXT:"), contextBar))
+		const maxSize int64 = 10 * 1024 * 1024
+		percent := float64(wt.Insights.SessionSize) / float64(maxSize)
+		label := fmt.Sprintf("%d%%", int(percent*100))
+		s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("CONTEXT:"), renderContextBar(percent, label)))
 	}
 
 	// Branch ahead/behind
@@ -1008,49 +952,16 @@ func wrapText(text string, width int) []string {
 	return lines
 }
 
-func modelShort(model string) string {
-	m := strings.ToLower(model)
-	switch {
-	case strings.Contains(m, "opus"):
-		return "opus"
-	case strings.Contains(m, "haiku"):
-		return "haiku"
+func contextMaxTokens(model string) int {
+	switch agent.ModelTier(model) {
+	case "opus":
+		return 1_000_000
 	default:
-		return "sonnet"
+		return 200_000
 	}
 }
 
-func renderContextBarTokens(tokens int) string {
-	const maxTokens = 200_000
-	percent := float64(tokens) / float64(maxTokens)
-	if percent > 1 {
-		percent = 1
-	}
-
-	bars := 10
-	filled := int(percent * float64(bars))
-	empty := bars - filled
-
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", empty)
-	tokenK := tokens / 1000
-	label := fmt.Sprintf("%d%% (%dk/%dk)", int(percent*100), tokenK, maxTokens/1000)
-
-	var barStyle lipgloss.Style
-	switch {
-	case percent >= 0.8:
-		barStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	case percent >= 0.5:
-		barStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
-	default:
-		barStyle = activeStyle
-	}
-
-	return dimStyle.Render("[") + barStyle.Render(bar) + dimStyle.Render("] ") + dimStyle.Render(label)
-}
-
-func renderContextBar(size int64) string {
-	const maxSize int64 = 10 * 1024 * 1024
-	percent := float64(size) / float64(maxSize)
+func renderContextBar(percent float64, label string) string {
 	if percent > 1 {
 		percent = 1
 	}
@@ -1063,7 +974,6 @@ func renderContextBar(size int64) string {
 	empty := bars - filled
 
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", empty)
-	percentStr := fmt.Sprintf("%d%%", int(percent*100))
 
 	var barStyle lipgloss.Style
 	switch {
@@ -1075,5 +985,5 @@ func renderContextBar(size int64) string {
 		barStyle = activeStyle
 	}
 
-	return dimStyle.Render("[") + barStyle.Render(bar) + dimStyle.Render("] ") + dimStyle.Render(percentStr)
+	return dimStyle.Render("[") + barStyle.Render(bar) + dimStyle.Render("] ") + dimStyle.Render(label)
 }

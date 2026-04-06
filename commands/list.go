@@ -11,6 +11,13 @@ import (
 	"github.com/moosecode/mori/tui"
 )
 
+var validStatuses = map[agent.AgentStatusType]bool{
+	agent.StatusWorking: true,
+	agent.StatusIdle:    true,
+	agent.StatusWait:    true,
+	agent.StatusNone:    true,
+}
+
 func PrintList(jsonOutput bool, statusFilter string) error {
 	worktrees, err := List()
 	if err != nil {
@@ -18,7 +25,11 @@ func PrintList(jsonOutput bool, statusFilter string) error {
 	}
 
 	if statusFilter != "" {
-		worktrees = filterByStatus(worktrees, statusFilter)
+		target := agent.AgentStatusType(strings.ToUpper(statusFilter))
+		if !validStatuses[target] {
+			return fmt.Errorf("invalid status '%s'. Valid values: working, idle, waiting, none", statusFilter)
+		}
+		worktrees = filterByStatus(worktrees, target)
 	}
 
 	if jsonOutput {
@@ -28,8 +39,7 @@ func PrintList(jsonOutput bool, statusFilter string) error {
 	return printTable(worktrees)
 }
 
-func filterByStatus(worktrees []tui.Worktree, filter string) []tui.Worktree {
-	target := agent.AgentStatusType(strings.ToUpper(filter))
+func filterByStatus(worktrees []tui.Worktree, target agent.AgentStatusType) []tui.Worktree {
 	var result []tui.Worktree
 	for _, wt := range worktrees {
 		if wt.Insights.Status == target {

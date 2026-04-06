@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/moosecode/mori/config"
+	gitutil "github.com/moosecode/mori/internal/git"
 )
 
 type CreateOptions struct {
@@ -27,8 +28,8 @@ func Create(opts CreateOptions) error {
 		return fmt.Errorf("cannot resolve repo dir '%s'", repo)
 	}
 
-	if !isMainRepo(absRepo) {
-		mainRepo, err := findMainRepo(absRepo)
+	if !gitutil.IsMainRepo(absRepo) {
+		mainRepo, err := gitutil.FindMainRepo(absRepo)
 		if err != nil {
 			return fmt.Errorf("not a git repository or worktree")
 		}
@@ -37,55 +38,10 @@ func Create(opts CreateOptions) error {
 
 	branch := opts.Branch
 	if branch == "" {
-		branch = "wt-" + randomSuffix()
+		branch = "wt-" + gitutil.RandomSuffix()
 	}
 
 	return createWorktree(absRepo, branch, opts.LaunchClaude)
-}
-
-func isMainRepo(path string) bool {
-	// Check if .git is a directory (main repo) vs a file (worktree)
-	info, err := os.Stat(filepath.Join(path, ".git"))
-	if err != nil {
-		return false
-	}
-	return info.IsDir()
-}
-
-func findMainRepo(worktreePath string) (string, error) {
-	out, err := exec.Command("git", "-C", worktreePath, "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func getMainBranch(repo string) string {
-	out, err := exec.Command("git", "-C", repo, "branch", "--show-current").Output()
-	if err == nil {
-		branch := strings.TrimSpace(string(out))
-		if branch != "" {
-			return branch
-		}
-	}
-
-	out, err = exec.Command("git", "-C", repo, "symbolic-ref", "refs/remotes/origin/HEAD").Output()
-	if err == nil {
-		parts := strings.Split(string(out), "/")
-		if len(parts) >= 3 {
-			return parts[len(parts)-1]
-		}
-	}
-
-	out, err = exec.Command("git", "-C", repo, "rev-parse", "--abbrev-ref", "HEAD").Output()
-	if err == nil {
-		branch := strings.TrimSpace(string(out))
-		if branch != "HEAD" {
-			return branch
-		}
-	}
-
-	return "main"
 }
 
 func repoHasCommits(repo string) (bool, error) {
@@ -109,7 +65,7 @@ func createWorktree(repo, branch string, launchClaude bool) error {
 		return fmt.Errorf("repository has no commits, cannot create worktree. Make at least one commit first")
 	}
 
-	mainBranch := getMainBranch(repo)
+	mainBranch := gitutil.GetMainBranch(repo)
 
 	fmt.Fprintf(os.Stderr, "    Creating branch from %s... ", mainBranch)
 
@@ -149,10 +105,3 @@ func setupWorktree(worktreeDir string, steps []config.Step) {
 	}
 }
 
-func randomSuffix() string {
-	out, err := exec.Command("sh", "-c", "LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c5").Output()
-	if err != nil || len(string(out)) == 0 {
-		return fmt.Sprintf("%d", os.Getpid())
-	}
-	return string(out)
-}

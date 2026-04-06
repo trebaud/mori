@@ -97,12 +97,16 @@ func runRemove(args []string) {
 }
 
 func runOpen(args []string) {
-	if len(args) == 0 {
+	fs := flag.NewFlagSet("open", flag.ExitOnError)
+	fs.Parse(args)
+
+	branch := fs.Arg(0)
+	if branch == "" {
 		fmt.Fprintf(os.Stderr, "Usage: mori open <branch>\n")
 		os.Exit(1)
 	}
 
-	if err := commands.Open(args[0]); err != nil {
+	if err := commands.Open(branch); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

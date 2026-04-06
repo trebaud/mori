@@ -201,7 +201,7 @@ func scanSession(path string) sessionData {
 			}
 
 			// Accumulate cost
-			p := pricing[modelTier(entry.Message.Model)]
+			p := pricing[ModelTier(entry.Message.Model)]
 			u := entry.Message.Usage
 			result.cost += float64(u.InputTokens) * p.input / 1_000_000
 			result.cost += float64(u.OutputTokens) * p.output / 1_000_000
@@ -302,7 +302,8 @@ var pricing = map[string]modelPricing{
 	"haiku":  {input: 0.80, output: 4.0, cacheWrite: 1.0, cacheRead: 0.08},
 }
 
-func modelTier(model string) string {
+// ModelTier returns the pricing tier name for a given model string.
+func ModelTier(model string) string {
 	m := strings.ToLower(model)
 	if strings.Contains(m, "opus") {
 		return "opus"
