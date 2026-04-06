@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/moosecode/mori/internal/agent"
+	"github.com/moosecode/mori/internal/git"
 )
 
 type Worktree struct {
@@ -16,27 +16,24 @@ type Worktree struct {
 	Branch       string
 	RelativePath string
 	IsMain       bool
-	Insights     agent.Status
+	Insights     agent.Insights
 }
 
 // List queries git for all worktrees and enriches them with agent insights.
 func List() ([]Worktree, error) {
-	if _, err := exec.Command("git", "rev-parse", "--git-dir").Output(); err != nil {
+	mainPath, err := git.FindMainRepo(".")
+	if err != nil {
 		return nil, fmt.Errorf("not a git repository")
 	}
 
-	out, err := exec.Command("git", "worktree", "list", "--porcelain").Output()
+	out, err := git.WorktreeList()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list worktrees: %w", err)
 	}
 
-	gitDir, _ := exec.Command("git", "rev-parse", "--git-dir").Output()
-	mainPath := filepath.Dir(strings.TrimSpace(string(gitDir)))
+	currentBranch := git.CurrentBranch()
 
-	branchOut, _ := exec.Command("git", "branch", "--show-current").Output()
-	currentBranch := strings.TrimSpace(string(branchOut))
-
-	wts := parseList(string(out), currentBranch)
+	wts := parseList(out, currentBranch)
 
 	home, _ := os.UserHomeDir()
 

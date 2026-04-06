@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/moosecode/mori/internal"
+	"github.com/moosecode/mori/internal/git"
 )
 
 type CreateOptions struct {
@@ -27,8 +28,8 @@ func Create(opts CreateOptions) error {
 		return fmt.Errorf("cannot resolve repo dir '%s'", repo)
 	}
 
-	if !internal.IsGitRepo(absRepo) {
-		mainRepo, err := internal.FindMainRepo(absRepo)
+	if !git.IsRepo(absRepo) {
+		mainRepo, err := git.FindMainRepo(absRepo)
 		if err != nil {
 			return fmt.Errorf("not a git repository or worktree")
 		}
@@ -64,7 +65,7 @@ func createWorktree(repo, branch string, launchClaude bool) error {
 		return fmt.Errorf("repository has no commits, cannot create worktree. Make at least one commit first")
 	}
 
-	mainBranch := internal.GetDefaultBranch(repo)
+	mainBranch := git.DefaultBranch(repo)
 
 	fmt.Fprintf(os.Stderr, "    Creating branch from %s... ", mainBranch)
 

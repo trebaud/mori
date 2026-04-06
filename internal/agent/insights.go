@@ -3,12 +3,12 @@ package agent
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/moosecode/mori/internal/git"
 )
 
 type StatusType string
@@ -20,7 +20,7 @@ const (
 	StatusNone    StatusType = "NONE"
 )
 
-type Status struct {
+type Insights struct {
 	Status        StatusType
 	LastActivity  time.Time
 	SessionSize   int64
@@ -47,17 +47,17 @@ func ClaudeProjectPath(worktreePath string) string {
 	return encoded
 }
 
-func GetInsights(worktreePath string) Status {
+func GetInsights(worktreePath string) Insights {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return Status{Status: StatusNone, Available: false}
+		return Insights{Status: StatusNone, Available: false}
 	}
 
 	projectDir := filepath.Join(home, ".claude", "projects", ClaudeProjectPath(worktreePath))
 
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
-		return Status{Status: StatusNone, Available: false}
+		return Insights{Status: StatusNone, Available: false}
 	}
 
 	var newestFile string
@@ -78,7 +78,7 @@ func GetInsights(worktreePath string) Status {
 	}
 
 	if newestFile == "" {
-		return Status{Status: StatusNone, Available: true, GitLog: getGitLog(worktreePath)}
+		return Insights{Status: StatusNone, Available: true, GitLog: git.Log(worktreePath, 5)}
 	}
 
 	info, _ := os.Stat(newestFile)
@@ -90,7 +90,7 @@ func GetInsights(worktreePath string) Status {
 	sessionID := strings.TrimSuffix(filepath.Base(newestFile), ".jsonl")
 	parsed := scanSession(newestFile)
 
-	return Status{
+	return Insights{
 		Status:        parsed.status,
 		LastActivity:  newestModTime,
 		SessionSize:   sessionSize,
@@ -105,8 +105,8 @@ func GetInsights(worktreePath string) Status {
 		MessageCount:  parsed.messageCount,
 		InputTokens:   parsed.inputTokens,
 		HasError:      parsed.hasError,
-		GitLog:        getGitLog(worktreePath),
-		AheadBehind:   getAheadBehind(worktreePath),
+		GitLog:        git.Log(worktreePath, 5),
+		AheadBehind:   git.AheadBehind(worktreePath),
 		Available:     true,
 	}
 }
@@ -310,50 +310,3 @@ func ModelTier(model string) string {
 	return "sonnet"
 }
 
-func getDefaultBranch(repo string) string {
-	out, err := exec.Command("git", "-C", repo, "symbolic-ref", "refs/remotes/origin/HEAD").Output()
-	if err == nil {
-		parts := strings.Split(strings.TrimSpace(string(out)), "/")
-		if len(parts) > 0 {
-			return parts[len(parts)-1]
-		}
-	}
-	for _, name := range []string{"main", "master"} {
-		if exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", name).Run() == nil {
-			return name
-		}
-	}
-	return "main"
-}
-
-func getGitLog(worktreePath string) []string {
-	out, err := exec.Command("git", "-C", worktreePath, "log", "--oneline", "--pretty=format:%ar: %s", "-n", "5").Output()
-	if err != nil {
-		return nil
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return nil
-	}
-	return lines
-}
-
-func getAheadBehind(worktreePath string) string {
-	mainBranch := getDefaultBranch(worktreePath)
-
-	out, err := exec.Command("git", "-C", worktreePath, "rev-list", "--left-right", "--count", mainBranch+"...HEAD").Output()
-	if err != nil {
-		return ""
-	}
-
-	parts := strings.Fields(strings.TrimSpace(string(out)))
-	if len(parts) != 2 {
-		return ""
-	}
-
-	behind, ahead := parts[0], parts[1]
-	if ahead == "0" && behind == "0" {
-		return ""
-	}
-	return fmt.Sprintf("+%s/-%s", ahead, behind)
-}

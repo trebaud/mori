@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/moosecode/mori/internal/agent"
+	"github.com/moosecode/mori/internal/git"
 )
 
 const (
@@ -110,10 +111,7 @@ type model struct {
 }
 
 func Run(worktrees []Worktree) {
-	currentBranch := ""
-	if out, err := exec.Command("git", "branch", "--show-current").Output(); err == nil {
-		currentBranch = strings.TrimSpace(string(out))
-	}
+	currentBranch := git.CurrentBranch()
 
 	ti := textinput.New()
 	ti.CharLimit = 60
@@ -437,7 +435,7 @@ func (m model) createWorktreeCmd(branch string) tea.Cmd {
 			branch = "wt-" + RandomSuffix()
 		}
 
-		mainBranch := GetDefaultBranch(repoRoot)
+		mainBranch := git.DefaultBranch(repoRoot)
 
 		worktreeDir := repoRoot + "/.claude/worktrees/" + branch
 		args = append(args, worktreeDir, "-b", branch, mainBranch)
@@ -475,7 +473,7 @@ func (m model) removeWorktreeCmd(path string, force bool) tea.Cmd {
 }
 
 func (m model) findRepoRoot() string {
-	root, err := FindMainRepo(".")
+	root, err := git.FindMainRepo(".")
 	if err != nil {
 		return "."
 	}
