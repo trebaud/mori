@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	gitutil "github.com/moosecode/mori/internal"
 )
 
 type StatusType string
@@ -312,6 +310,22 @@ func ModelTier(model string) string {
 	return "sonnet"
 }
 
+func getDefaultBranch(repo string) string {
+	out, err := exec.Command("git", "-C", repo, "symbolic-ref", "refs/remotes/origin/HEAD").Output()
+	if err == nil {
+		parts := strings.Split(strings.TrimSpace(string(out)), "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+	for _, name := range []string{"main", "master"} {
+		if exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", name).Run() == nil {
+			return name
+		}
+	}
+	return "main"
+}
+
 func getGitLog(worktreePath string) []string {
 	out, err := exec.Command("git", "-C", worktreePath, "log", "--oneline", "--pretty=format:%ar: %s", "-n", "5").Output()
 	if err != nil {
@@ -325,7 +339,7 @@ func getGitLog(worktreePath string) []string {
 }
 
 func getAheadBehind(worktreePath string) string {
-	mainBranch := gitutil.GetDefaultBranch(worktreePath)
+	mainBranch := getDefaultBranch(worktreePath)
 
 	out, err := exec.Command("git", "-C", worktreePath, "rev-list", "--left-right", "--count", mainBranch+"...HEAD").Output()
 	if err != nil {

@@ -85,7 +85,7 @@ check_go() {
 build_binary() {
   info "Building mori..."
   cd "$SCRIPT_DIR"
-  go build -o "$BIN_NAME" .
+  go build -o "$BIN_NAME" ./cmd/mori
   ok "Binary built: $SCRIPT_DIR/$BIN_NAME"
 }
 

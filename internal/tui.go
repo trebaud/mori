@@ -1,4 +1,4 @@
-package tui
+package internal
 
 import (
 	"fmt"
@@ -11,10 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/moosecode/mori/agent"
-	"github.com/moosecode/mori/config"
-	gitutil "github.com/moosecode/mori/internal"
-	"github.com/moosecode/mori/worktree"
+	"github.com/moosecode/mori/internal/agent"
 )
 
 const (
@@ -88,7 +85,7 @@ type worktreeRemovedMsg struct {
 }
 
 type model struct {
-	worktrees     []worktree.Worktree // all worktrees (unfiltered)
+	worktrees     []Worktree // all worktrees (unfiltered)
 	filtered      []int      // indices into worktrees matching current filter
 	cursor        int
 	selected      string
@@ -112,7 +109,7 @@ type model struct {
 	forceDelete  bool // true when triggered by D key
 }
 
-func Run(worktrees []worktree.Worktree) {
+func Run(worktrees []Worktree) {
 	currentBranch := ""
 	if out, err := exec.Command("git", "branch", "--show-current").Output(); err == nil {
 		currentBranch = strings.TrimSpace(string(out))
@@ -231,7 +228,7 @@ func statusRank(s agent.StatusType) int {
 	}
 }
 
-func (m model) selectedWorktree() *worktree.Worktree {
+func (m model) selectedWorktree() *Worktree {
 	if m.cursor < len(m.filtered) {
 		return &m.worktrees[m.filtered[m.cursor]]
 	}
@@ -437,10 +434,10 @@ func (m model) createWorktreeCmd(branch string) tea.Cmd {
 		repoRoot := m.findRepoRoot()
 		args := []string{"-C", repoRoot, "worktree", "add"}
 		if branch == "" {
-			branch = "wt-" + gitutil.RandomSuffix()
+			branch = "wt-" + RandomSuffix()
 		}
 
-		mainBranch := gitutil.GetDefaultBranch(repoRoot)
+		mainBranch := GetDefaultBranch(repoRoot)
 
 		worktreeDir := repoRoot + "/.claude/worktrees/" + branch
 		args = append(args, worktreeDir, "-b", branch, mainBranch)
@@ -449,7 +446,7 @@ func (m model) createWorktreeCmd(branch string) tea.Cmd {
 			return worktreeCreatedMsg{err: fmt.Errorf("git worktree add failed: %w", err)}
 		}
 
-		cfg := config.Load(repoRoot)
+		cfg := Load(repoRoot)
 		var warnings []string
 		for _, step := range cfg.PostCreate {
 			cmd := exec.Command("sh", "-c", step.Cmd)
@@ -478,7 +475,7 @@ func (m model) removeWorktreeCmd(path string, force bool) tea.Cmd {
 }
 
 func (m model) findRepoRoot() string {
-	root, err := gitutil.FindMainRepo(".")
+	root, err := FindMainRepo(".")
 	if err != nil {
 		return "."
 	}
@@ -486,7 +483,7 @@ func (m model) findRepoRoot() string {
 }
 
 func (m *model) refreshWorktreeList() {
-	if wts, err := worktree.List(); err == nil {
+	if wts, err := List(); err == nil {
 		m.worktrees = wts
 		m.applyFilter()
 	}

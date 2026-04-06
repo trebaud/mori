@@ -1,4 +1,4 @@
-package worktree
+package internal
 
 import (
 	"bufio"
@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/moosecode/mori/agent"
+	"github.com/moosecode/mori/internal/agent"
 )
 
 type Worktree struct {
