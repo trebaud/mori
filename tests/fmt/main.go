@@ -52,7 +52,6 @@ func main() {
 			continue
 		}
 
-		// Only track top-level tests (not subtests) for the summary
 		if _, exists := results[ev.Test]; !exists {
 			results[ev.Test] = &result{name: ev.Test}
 			order = append(order, ev.Test)
@@ -74,7 +73,6 @@ func main() {
 			skipped++
 		case "output":
 			line := strings.TrimRight(ev.Output, "\n")
-			// Keep only meaningful output (skip RUN/PAUSE/CONT noise)
 			if line != "" &&
 				!strings.HasPrefix(line, "=== RUN") &&
 				!strings.HasPrefix(line, "=== PAUSE") &&
@@ -89,7 +87,6 @@ func main() {
 
 	elapsed := time.Since(start)
 
-	// Print results
 	fmt.Println()
 	for _, name := range order {
 		r := results[name]
@@ -109,7 +106,6 @@ func main() {
 		}
 	}
 
-	// Summary
 	total := passed + failed + skipped
 	fmt.Println()
 	if failed > 0 {
