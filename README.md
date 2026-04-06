@@ -4,6 +4,8 @@
 
 A TUI for managing git worktrees with Claude Code agent insights.
 
+![Mori TUI](screenshots/mori.png)
+
 ## Features
 
 - Browse, create, and delete git worktrees without leaving the TUI
