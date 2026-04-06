@@ -80,9 +80,7 @@ func createWorktree(repo, branch string, launchClaude bool) error {
 		setupWorktree(worktreeDir, cfg.PostCreate)
 	}
 
-	fmt.Fprintf(os.Stderr, "\n  \033[0;90mcd %s\033[0m\n\n", worktreeDir)
-
-	fmt.Print(worktreeDir)
+	fmt.Fprintf(os.Stderr, "\n  \033[0;90m%s\033[0m\n\n", worktreeDir)
 
 	if launchClaude {
 		fmt.Fprintf(os.Stderr, "\n\033[0;36m  Launching Claude Code...\033[0m\n")

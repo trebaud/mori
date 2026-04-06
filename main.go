@@ -127,7 +127,7 @@ Usage:
   mori new [branch] [flags]     Create a new worktree
   mori list [flags]             List worktrees
   mori remove <branch> [flags]  Remove a worktree
-  mori open <branch>            Switch to worktree by branch name
+  mori open <branch>            Print worktree path for branch
   mori status                   Show worktree summary
 
 Flags (new):
@@ -147,7 +147,7 @@ Global:
 
 TUI keys:
   j/k, arrows    Navigate        i       Toggle insights
-  Enter          Select worktree  q       Quit
+  Enter          Select (copy cd) q       Quit
   n              New worktree     d       Delete worktree
   /              Filter           s       Cycle sort mode
   r              Refresh          ?       Show all keybindings

@@ -115,45 +115,6 @@ install_binary() {
   INSTALL_BIN_DIR="$bin_dir"
 }
 
-setup_shell_function() {
-  local shell_rc=""
-
-  # Detect shell from SHELL env var (parent shell, not script shell)
-  case "$(basename "${SHELL:-}")" in
-    zsh)  shell_rc="$HOME/.zshrc" ;;
-    bash) shell_rc="$HOME/.bashrc" ;;
-    *)
-      warn "Could not detect shell. Add the wrapper function manually (see README)."
-      return
-      ;;
-  esac
-
-  local func
-  func=$(cat << 'FUNC'
-mori() {
-    local target_dir=$(command mori "$@")
-    if [ -d "$target_dir" ]; then
-        cd "$target_dir"
-    fi
-}
-FUNC
-)
-
-  if grep -q "${BIN_NAME}()" "$shell_rc" 2>/dev/null; then
-    ok "Shell function already in $shell_rc"
-  else
-    {
-      echo ""
-      echo "# Mori - Git worktree manager"
-      echo "$func"
-    } >> "$shell_rc"
-    ok "Shell function added to $shell_rc"
-  fi
-
-  # Export for final summary
-  SHELL_RC="$shell_rc"
-}
-
 # -------------------------------------------------------------------
 # Main
 # -------------------------------------------------------------------
@@ -169,7 +130,6 @@ echo ""
 
 build_binary
 install_binary
-setup_shell_function
 
 echo ""
 printf "${GREEN}${BOLD}  Installation complete!${RESET}\n"
@@ -181,11 +141,4 @@ printf "    ${CYAN}mori list${RESET}                          # list worktrees\n
 echo ""
 printf "  ${DIM}Source: $SCRIPT_DIR${RESET}\n"
 printf "  ${DIM}Binary: ${INSTALL_BIN_DIR:-/usr/local/bin}/$BIN_NAME${RESET}\n"
-if [ -n "${SHELL_RC:-}" ]; then
-  printf "  ${DIM}Shell:  $SHELL_RC${RESET}\n"
-fi
 echo ""
-if [ -n "${SHELL_RC:-}" ]; then
-  printf "  ${DIM}Restart your shell or run: source $SHELL_RC${RESET}\n"
-  echo ""
-fi

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/moosecode/mori/agent"
 	"github.com/moosecode/mori/config"
 	gitutil "github.com/moosecode/mori/internal/git"
@@ -143,7 +143,7 @@ func Run(worktrees []Worktree) {
 	}
 
 	if finalModel, ok := m.(model); ok && finalModel.selected != "" {
-		fmt.Print(finalModel.selected)
+		fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("cd "+finalModel.selected))
 	}
 }
 
@@ -276,13 +276,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	switch m.mode {
@@ -312,6 +312,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if wt := m.selectedWorktree(); wt != nil {
 			m.selected = wt.Path
+			return m, tea.Batch(tea.SetClipboard("cd "+wt.Path), tea.Quit)
 		}
 		return m, tea.Quit
 	case "i":
@@ -328,14 +329,12 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		m.mode = modeSearch
 		m.textInput.Placeholder = "filter by branch or path..."
 		m.textInput.SetValue("")
-		m.textInput.Focus()
-		return m, m.textInput.Cursor.BlinkCmd()
+		return m, m.textInput.Focus()
 	case "n":
 		m.mode = modeCreate
 		m.textInput.Placeholder = "branch name (empty for random)"
 		m.textInput.SetValue("")
-		m.textInput.Focus()
-		return m, m.textInput.Cursor.BlinkCmd()
+		return m, m.textInput.Focus()
 	case "d":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
@@ -365,7 +364,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleSearchKey(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd) {
+func (m model) handleSearchKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -395,7 +394,7 @@ func (m model) handleSearchKey(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd) 
 	return m, cmd
 }
 
-func (m model) handleCreateKey(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd) {
+func (m model) handleCreateKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -493,25 +492,25 @@ func (m *model) refreshWorktreeList() {
 
 // --- View ---
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	totalWidth := m.width
 	if totalWidth == 0 {
 		totalWidth = 140
 	}
 
 	if m.showHelp {
-		return m.viewHelp(totalWidth)
+		return tea.NewView(m.viewHelp(totalWidth))
 	}
 
 	if m.showInsights {
 		if totalWidth >= sideByMinWidth {
-			return m.viewSideBySide(totalWidth)
+			return tea.NewView(m.viewSideBySide(totalWidth))
 		}
 		if totalWidth >= listOnlyMinWidth {
-			return m.viewStacked(totalWidth)
+			return tea.NewView(m.viewStacked(totalWidth))
 		}
 	}
-	return m.viewListOnly(totalWidth)
+	return tea.NewView(m.viewListOnly(totalWidth))
 }
 
 func (m model) renderHeader() string {
@@ -611,7 +610,7 @@ func (m model) viewHelp(width int) string {
 	}{
 		{"Navigation", []struct{ key, desc string }{
 			{"j/k, ↑/↓", "Move cursor up/down"},
-			{"Enter", "Select worktree and switch"},
+			{"Enter", "Select worktree (copy cd to clipboard)"},
 			{"q, Ctrl+C", "Quit"},
 		}},
 		{"Views", []struct{ key, desc string }{
@@ -672,9 +671,9 @@ func (m model) renderFooter() string {
 		return footerStyle.Render("[Enter] Apply  [Esc] Clear  [↑/↓] Navigate")
 	}
 	if m.showInsights {
-		return footerStyle.Render("[?] Help  [i] Hide Insights  [Enter] Switch  [q] Quit")
+		return footerStyle.Render("[?] Help  [i] Hide Insights  [Enter] Select  [q] Quit")
 	}
-	return footerStyle.Render("[?] Help  [i] Insights  [Enter] Switch  [q] Quit")
+	return footerStyle.Render("[?] Help  [i] Insights  [Enter] Select  [q] Quit")
 }
 
 func colWidths(width int) (int, int, int, int) {
@@ -696,7 +695,7 @@ func (m model) renderWorktreeList(width int) string {
 	tableW := 4 + pathW + branchW + sessionW + costW
 
 	s.WriteString(dimStyle.Render(strings.Repeat("─", tableW)) + "\n")
-	s.WriteString(lipgloss.JoinHorizontal(0,
+	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
 		dimStyle.Width(4).Render(""),
 		boldStyle.Width(pathW).Render("PATH"),
 		boldStyle.Width(branchW).Render("BRANCH"),
@@ -780,7 +779,7 @@ func renderWorktreeRow(m model, cursorIdx, wtIdx int, width int) string {
 		costVal = dimStyle.Width(costW).Render(costVal)
 	}
 
-	return lipgloss.JoinHorizontal(0, checkbox, pathVal, branchVal, sessionVal, costVal)
+	return lipgloss.JoinHorizontal(lipgloss.Top, checkbox, pathVal, branchVal, sessionVal, costVal)
 }
 
 func renderInsightsPanel(m model, width int) string {

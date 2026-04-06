@@ -30,7 +30,7 @@ Mori is a TUI and CLI for managing Git worktrees with built-in Claude Code agent
 | `mori` | | Launch interactive TUI |
 | `mori new [branch]` | | Create worktree (random name if omitted) |
 | `mori new [branch] -c` | | Create worktree and launch Claude Code in it |
-| `mori open <branch>` | | Switch to existing worktree |
+| `mori open <branch>` | | Print worktree path for branch |
 | `mori list` | `ls` | Table view: path, branch, status, cost |
 | `mori list --json` | | Full JSON with cost, model, task, context |
 | `mori list --status working` | | Filter by status: working, idle, waiting, none |
@@ -43,7 +43,7 @@ Mori is a TUI and CLI for managing Git worktrees with built-in Claude Code agent
 | Key | Action |
 |---|---|
 | `j`/`k`, arrows | Navigate worktrees |
-| `Enter` | Select worktree and cd into it |
+| `Enter` | Select worktree (copy `cd` command to clipboard) |
 | `i` | Toggle insights panel (cost, context, task, git log) |
 | `n` | Create new worktree |
 | `d` / `D` | Delete worktree / force delete |
@@ -113,7 +113,6 @@ Create `.mori.json` in the repo root with `post_create` steps. These run automat
 
 ## Notes
 
-- Mori installs a shell function that wraps the binary so `cd` works on worktree selection.
 - Worktrees are created at `.claude/worktrees/{branch}` relative to the repo root.
 - The TUI adapts layout to terminal width: list-only (<80), stacked (80-119), side-by-side (120+).
 - Refresh rate is adaptive: 2s when agents are active, 10s when idle.

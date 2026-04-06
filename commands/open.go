@@ -24,6 +24,6 @@ func Open(branch string) error {
 		return fmt.Errorf("no worktree found for branch '%s'", branch)
 	}
 
-	fmt.Print(target.Path)
+	fmt.Println(target.Path)
 	return nil
 }

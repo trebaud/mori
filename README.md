@@ -14,7 +14,6 @@ A TUI for managing git worktrees with Claude Code agent insights.
 - Per-worktree insights: cost, context usage, current task, git log, ahead/behind
 - Search/filter (`/`) and sort (`s`) worktrees
 - Adaptive refresh: 2s when agents are active, 10s when idle
-- Selecting a worktree `cd`s into it via shell wrapper
 - Includes a [Claude Code skill](skill/SKILL.md) so Claude can manage worktrees for you
 
 ## Install
@@ -25,7 +24,7 @@ cd mori
 ./install.sh
 ```
 
-This builds the binary, installs it to your PATH, and adds a `mori` shell function to your rc file so selecting a worktree `cd`s you into it.
+This builds the binary and installs it to your PATH.
 
 ### Manual
 
@@ -34,24 +33,13 @@ go build -o mori .
 cp mori /usr/local/bin/
 ```
 
-Then add to your `~/.zshrc` or `~/.bashrc`:
-
-```bash
-mori() {
-    local target_dir=$(command mori "$@")
-    if [ -d "$target_dir" ]; then
-        cd "$target_dir"
-    fi
-}
-```
-
 ## Usage
 
 ```bash
 mori                           # Launch the TUI
 mori new                       # Create a new worktree (random branch)
 mori new feat --claude         # Create and launch Claude Code in it
-mori open feat                 # Switch to worktree by branch name
+mori open feat                 # Print worktree path for branch
 mori list                      # List worktrees (table)
 mori list --json               # List with full insights as JSON
 mori list --status working     # Filter by agent status
@@ -66,7 +54,7 @@ mori remove feat --force       # Remove without confirmation
 |---------|-------|-------------|
 | `mori` | | Launch interactive TUI |
 | `mori new [branch]` | | Create a new worktree |
-| `mori open <branch>` | | Switch to worktree by name |
+| `mori open <branch>` | | Print worktree path for branch |
 | `mori list` | `ls` | List worktrees non-interactively |
 | `mori status` | | Show worktree summary |
 | `mori remove <branch>` | `rm` | Remove a worktree |
@@ -97,7 +85,7 @@ mori remove feat --force       # Remove without confirmation
 | Key | Action |
 |-----|--------|
 | `j`/`k`, `↑`/`↓` | Navigate |
-| `Enter` | Select worktree and cd into it |
+| `Enter` | Select worktree (copy `cd` command to clipboard) |
 | `i` | Toggle insights panel |
 | `n` | Create new worktree |
 | `d` / `D` | Delete worktree / force delete |
