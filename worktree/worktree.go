@@ -1,4 +1,4 @@
-package tui
+package worktree
 
 import (
 	"bufio"
@@ -16,11 +16,11 @@ type Worktree struct {
 	Branch       string
 	RelativePath string
 	IsMain       bool
-	Insights     agent.AgentStatus
+	Insights     agent.Status
 }
 
-// ListWorktrees queries git for all worktrees and enriches them with agent insights.
-func ListWorktrees() ([]Worktree, error) {
+// List queries git for all worktrees and enriches them with agent insights.
+func List() ([]Worktree, error) {
 	if _, err := exec.Command("git", "rev-parse", "--git-dir").Output(); err != nil {
 		return nil, fmt.Errorf("not a git repository")
 	}
@@ -36,20 +36,20 @@ func ListWorktrees() ([]Worktree, error) {
 	branchOut, _ := exec.Command("git", "branch", "--show-current").Output()
 	currentBranch := strings.TrimSpace(string(branchOut))
 
-	wts := parseWorktreeList(string(out), currentBranch)
+	wts := parseList(string(out), currentBranch)
 
 	home, _ := os.UserHomeDir()
 
 	for i := range wts {
-		wts[i].RelativePath = MakeRelativePath(wts[i].Path, mainPath, home)
+		wts[i].RelativePath = makeRelativePath(wts[i].Path, mainPath, home)
 		wts[i].Insights = agent.GetInsights(wts[i].Path)
 	}
 
 	return wts, nil
 }
 
-// parseWorktreeList parses git worktree list --porcelain output into Worktree structs.
-func parseWorktreeList(output, currentBranch string) []Worktree {
+// parseList parses git worktree list --porcelain output into Worktree structs.
+func parseList(output, currentBranch string) []Worktree {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	var wts []Worktree
 	var current Worktree
@@ -76,8 +76,17 @@ func parseWorktreeList(output, currentBranch string) []Worktree {
 	return wts
 }
 
-// MakeRelativePath converts an absolute worktree path into a short display path.
-func MakeRelativePath(path, mainPath, home string) string {
+// FindByBranch returns the worktree matching the given branch name, or nil if not found.
+func FindByBranch(worktrees []Worktree, branch string) *Worktree {
+	for i := range worktrees {
+		if worktrees[i].Branch == branch {
+			return &worktrees[i]
+		}
+	}
+	return nil
+}
+
+func makeRelativePath(path, mainPath, home string) string {
 	rel := path
 	if home != "" && strings.HasPrefix(rel, home) {
 		rel = "~" + rel[len(home):]

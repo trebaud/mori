@@ -20,8 +20,8 @@ func RandomSuffix() string {
 	return string(b)
 }
 
-// IsMainRepo returns true if path contains a .git directory (not a worktree .git file).
-func IsMainRepo(path string) bool {
+// IsGitRepo returns true if path contains a .git directory (not a worktree .git file).
+func IsGitRepo(path string) bool {
 	info, err := os.Stat(filepath.Join(path, ".git"))
 	if err != nil {
 		return false
@@ -52,12 +52,8 @@ func GetMainBranch(repo string) string {
 	}
 
 	// Try origin/HEAD
-	out, err = exec.Command("git", "-C", repo, "symbolic-ref", "refs/remotes/origin/HEAD").Output()
-	if err == nil {
-		parts := strings.Split(string(out), "/")
-		if len(parts) >= 3 {
-			return strings.TrimSpace(parts[len(parts)-1])
-		}
+	if branch := GetDefaultBranch(repo); branch != "main" {
+		return branch
 	}
 
 	// Try HEAD
@@ -69,5 +65,24 @@ func GetMainBranch(repo string) string {
 		}
 	}
 
+	return "main"
+}
+
+// GetDefaultBranch returns the repository's default branch name (e.g. "main" or "master")
+// by checking origin/HEAD, then probing for common branch names.
+func GetDefaultBranch(repo string) string {
+	out, err := exec.Command("git", "-C", repo, "symbolic-ref", "refs/remotes/origin/HEAD").Output()
+	if err == nil {
+		parts := strings.Split(strings.TrimSpace(string(out)), "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+	// Check which common default branch exists
+	for _, name := range []string{"main", "master"} {
+		if exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", name).Run() == nil {
+			return name
+		}
+	}
 	return "main"
 }

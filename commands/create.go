@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/moosecode/mori/config"
-	gitutil "github.com/moosecode/mori/internal/git"
+	gitutil "github.com/moosecode/mori/internal"
 )
 
 type CreateOptions struct {
@@ -28,7 +28,7 @@ func Create(opts CreateOptions) error {
 		return fmt.Errorf("cannot resolve repo dir '%s'", repo)
 	}
 
-	if !gitutil.IsMainRepo(absRepo) {
+	if !gitutil.IsGitRepo(absRepo) {
 		mainRepo, err := gitutil.FindMainRepo(absRepo)
 		if err != nil {
 			return fmt.Errorf("not a git repository or worktree")

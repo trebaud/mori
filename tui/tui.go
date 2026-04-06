@@ -13,7 +13,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/moosecode/mori/agent"
 	"github.com/moosecode/mori/config"
-	gitutil "github.com/moosecode/mori/internal/git"
+	gitutil "github.com/moosecode/mori/internal"
+	"github.com/moosecode/mori/worktree"
 )
 
 const (
@@ -87,7 +88,7 @@ type worktreeRemovedMsg struct {
 }
 
 type model struct {
-	worktrees     []Worktree // all worktrees (unfiltered)
+	worktrees     []worktree.Worktree // all worktrees (unfiltered)
 	filtered      []int      // indices into worktrees matching current filter
 	cursor        int
 	selected      string
@@ -111,7 +112,7 @@ type model struct {
 	forceDelete  bool // true when triggered by D key
 }
 
-func Run(worktrees []Worktree) {
+func Run(worktrees []worktree.Worktree) {
 	currentBranch := ""
 	if out, err := exec.Command("git", "branch", "--show-current").Output(); err == nil {
 		currentBranch = strings.TrimSpace(string(out))
@@ -217,7 +218,7 @@ func (m *model) applySort() {
 	})
 }
 
-func statusRank(s agent.AgentStatusType) int {
+func statusRank(s agent.StatusType) int {
 	switch s {
 	case agent.StatusWorking:
 		return 0
@@ -230,7 +231,7 @@ func statusRank(s agent.AgentStatusType) int {
 	}
 }
 
-func (m model) selectedWorktree() *Worktree {
+func (m model) selectedWorktree() *worktree.Worktree {
 	if m.cursor < len(m.filtered) {
 		return &m.worktrees[m.filtered[m.cursor]]
 	}
@@ -464,10 +465,11 @@ func (m model) createWorktreeCmd(branch string) tea.Cmd {
 
 func (m model) removeWorktreeCmd(path string, force bool) tea.Cmd {
 	return func() tea.Msg {
-		args := []string{"worktree", "remove", path}
+		args := []string{"worktree", "remove"}
 		if force {
-			args = []string{"worktree", "remove", "--force", path}
+			args = append(args, "--force")
 		}
+		args = append(args, path)
 		if err := exec.Command("git", args...).Run(); err != nil {
 			return worktreeRemovedMsg{err: err}
 		}
@@ -484,7 +486,7 @@ func (m model) findRepoRoot() string {
 }
 
 func (m *model) refreshWorktreeList() {
-	if wts, err := ListWorktrees(); err == nil {
+	if wts, err := worktree.List(); err == nil {
 		m.worktrees = wts
 		m.applyFilter()
 	}
@@ -715,7 +717,7 @@ func (m model) renderWorktreeList(width int) string {
 	return s.String()
 }
 
-func statusIcon(status agent.AgentStatusType) string {
+func statusIcon(status agent.StatusType) string {
 	switch status {
 	case agent.StatusWorking:
 		return "●"
@@ -728,7 +730,7 @@ func statusIcon(status agent.AgentStatusType) string {
 	}
 }
 
-func statusStyle(status agent.AgentStatusType) lipgloss.Style {
+func statusStyle(status agent.StatusType) lipgloss.Style {
 	switch status {
 	case agent.StatusWorking:
 		return workingStyle

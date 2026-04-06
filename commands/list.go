@@ -8,10 +8,10 @@ import (
 	"text/tabwriter"
 
 	"github.com/moosecode/mori/agent"
-	"github.com/moosecode/mori/tui"
+	"github.com/moosecode/mori/worktree"
 )
 
-var validStatuses = map[agent.AgentStatusType]bool{
+var validStatuses = map[agent.StatusType]bool{
 	agent.StatusWorking: true,
 	agent.StatusIdle:    true,
 	agent.StatusWait:    true,
@@ -19,13 +19,13 @@ var validStatuses = map[agent.AgentStatusType]bool{
 }
 
 func PrintList(jsonOutput bool, statusFilter string) error {
-	worktrees, err := List()
+	worktrees, err := worktree.List()
 	if err != nil {
 		return err
 	}
 
 	if statusFilter != "" {
-		target := agent.AgentStatusType(strings.ToUpper(statusFilter))
+		target := agent.StatusType(strings.ToUpper(statusFilter))
 		if !validStatuses[target] {
 			return fmt.Errorf("invalid status '%s'. Valid values: working, idle, waiting, none", statusFilter)
 		}
@@ -39,9 +39,9 @@ func PrintList(jsonOutput bool, statusFilter string) error {
 	return printTable(worktrees)
 }
 
-func filterByStatus(worktrees []tui.Worktree, target agent.AgentStatusType) []tui.Worktree {
-	var result []tui.Worktree
-	for _, wt := range worktrees {
+func filterByStatus(wts []worktree.Worktree, target agent.StatusType) []worktree.Worktree {
+	var result []worktree.Worktree
+	for _, wt := range wts {
 		if wt.Insights.Status == target {
 			result = append(result, wt)
 		}
@@ -61,11 +61,11 @@ type worktreeJSON struct {
 	AheadBehind  string  `json:"ahead_behind,omitempty"`
 }
 
-func sessionLabel(wt tui.Worktree) string {
+func sessionLabel(wt worktree.Worktree) string {
 	return string(wt.Insights.Status)
 }
 
-func printJSON(worktrees []tui.Worktree) error {
+func printJSON(worktrees []worktree.Worktree) error {
 	var items []worktreeJSON
 	for _, wt := range worktrees {
 		item := worktreeJSON{
@@ -98,7 +98,7 @@ func printJSON(worktrees []tui.Worktree) error {
 	return enc.Encode(items)
 }
 
-func printTable(worktrees []tui.Worktree) error {
+func printTable(worktrees []worktree.Worktree) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "PATH\tBRANCH\tSESSION\tCOST")
 	for _, wt := range worktrees {

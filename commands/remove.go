@@ -8,23 +8,16 @@ import (
 	"strings"
 
 	"github.com/moosecode/mori/agent"
-	"github.com/moosecode/mori/tui"
+	"github.com/moosecode/mori/worktree"
 )
 
 func Remove(branch string, force bool) error {
-	worktrees, err := List()
+	worktrees, err := worktree.List()
 	if err != nil {
 		return err
 	}
 
-	var target *tui.Worktree
-	for i := range worktrees {
-		if worktrees[i].Branch == branch {
-			target = &worktrees[i]
-			break
-		}
-	}
-
+	target := worktree.FindByBranch(worktrees, branch)
 	if target == nil {
 		return fmt.Errorf("no worktree found for branch '%s'", branch)
 	}
@@ -52,10 +45,11 @@ func Remove(branch string, force bool) error {
 
 	fmt.Fprintf(os.Stderr, "Removing worktree '%s'... ", branch)
 
-	args := []string{"worktree", "remove", target.Path}
+	args := []string{"worktree", "remove"}
 	if force {
-		args = []string{"worktree", "remove", "--force", target.Path}
+		args = append(args, "--force")
 	}
+	args = append(args, target.Path)
 
 	if err := exec.Command("git", args...).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "\033[1;31m✖\033[0m\n")

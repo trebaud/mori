@@ -9,19 +9,21 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	gitutil "github.com/moosecode/mori/internal"
 )
 
-type AgentStatusType string
+type StatusType string
 
 const (
-	StatusWorking AgentStatusType = "WORKING"
-	StatusIdle    AgentStatusType = "IDLE"
-	StatusWait    AgentStatusType = "WAITING"
-	StatusNone    AgentStatusType = "NONE"
+	StatusWorking StatusType = "WORKING"
+	StatusIdle    StatusType = "IDLE"
+	StatusWait    StatusType = "WAITING"
+	StatusNone    StatusType = "NONE"
 )
 
-type AgentStatus struct {
-	Status        AgentStatusType
+type Status struct {
+	Status        StatusType
 	LastActivity  time.Time
 	SessionSize   int64
 	CurrentTask   string
@@ -36,10 +38,9 @@ type AgentStatus struct {
 	GitLog        []string
 	Available     bool
 
-	// Richer fields
-	InputTokens  int   // latest input token count for context estimation
-	HasError     bool  // last tool_result had is_error
-	AheadBehind  string // e.g. "+3/-0" relative to main
+	InputTokens int    // latest input token count for context estimation
+	HasError    bool   // last tool_result had is_error
+	AheadBehind string // e.g. "+3/-0" relative to main
 }
 
 func ClaudeProjectPath(worktreePath string) string {
@@ -48,17 +49,17 @@ func ClaudeProjectPath(worktreePath string) string {
 	return encoded
 }
 
-func GetInsights(worktreePath string) AgentStatus {
+func GetInsights(worktreePath string) Status {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return AgentStatus{Status: StatusNone, Available: false}
+		return Status{Status: StatusNone, Available: false}
 	}
 
 	projectDir := filepath.Join(home, ".claude", "projects", ClaudeProjectPath(worktreePath))
 
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
-		return AgentStatus{Status: StatusNone, Available: false}
+		return Status{Status: StatusNone, Available: false}
 	}
 
 	var newestFile string
@@ -79,7 +80,7 @@ func GetInsights(worktreePath string) AgentStatus {
 	}
 
 	if newestFile == "" {
-		return AgentStatus{Status: StatusNone, Available: true, GitLog: getGitLog(worktreePath)}
+		return Status{Status: StatusNone, Available: true, GitLog: getGitLog(worktreePath)}
 	}
 
 	info, _ := os.Stat(newestFile)
@@ -91,7 +92,7 @@ func GetInsights(worktreePath string) AgentStatus {
 	sessionID := strings.TrimSuffix(filepath.Base(newestFile), ".jsonl")
 	parsed := scanSession(newestFile)
 
-	return AgentStatus{
+	return Status{
 		Status:        parsed.status,
 		LastActivity:  newestModTime,
 		SessionSize:   sessionSize,
@@ -113,7 +114,7 @@ func GetInsights(worktreePath string) AgentStatus {
 }
 
 type sessionData struct {
-	status        AgentStatusType
+	status        StatusType
 	task          string
 	slug          string
 	model         string
@@ -193,14 +194,12 @@ func scanSession(path string) sessionData {
 			result.lastTool = extractToolName(entry.Message.Content)
 			result.hasError = checkToolError(entry.Message.Content)
 
-			// Track input tokens from latest assistant message
 			if entry.Message.Usage.InputTokens > 0 {
 				result.inputTokens = entry.Message.Usage.InputTokens +
 					entry.Message.Usage.CacheCreationInputTokens +
 					entry.Message.Usage.CacheReadInputTokens
 			}
 
-			// Accumulate cost
 			p := pricing[ModelTier(entry.Message.Model)]
 			u := entry.Message.Usage
 			result.cost += float64(u.InputTokens) * p.input / 1_000_000
@@ -288,7 +287,6 @@ func checkToolError(raw json.RawMessage) bool {
 	return false
 }
 
-// Pricing per million tokens (USD)
 type modelPricing struct {
 	input      float64
 	output     float64
@@ -327,14 +325,7 @@ func getGitLog(worktreePath string) []string {
 }
 
 func getAheadBehind(worktreePath string) string {
-	// Get the main branch to compare against
-	mainBranch := "main"
-	if out, err := exec.Command("git", "-C", worktreePath, "symbolic-ref", "refs/remotes/origin/HEAD").Output(); err == nil {
-		parts := strings.Split(strings.TrimSpace(string(out)), "/")
-		if len(parts) > 0 {
-			mainBranch = parts[len(parts)-1]
-		}
-	}
+	mainBranch := gitutil.GetDefaultBranch(worktreePath)
 
 	out, err := exec.Command("git", "-C", worktreePath, "rev-list", "--left-right", "--count", mainBranch+"...HEAD").Output()
 	if err != nil {

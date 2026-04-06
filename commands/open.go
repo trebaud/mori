@@ -3,23 +3,16 @@ package commands
 import (
 	"fmt"
 
-	"github.com/moosecode/mori/tui"
+	"github.com/moosecode/mori/worktree"
 )
 
 func Open(branch string) error {
-	worktrees, err := List()
+	worktrees, err := worktree.List()
 	if err != nil {
 		return err
 	}
 
-	var target *tui.Worktree
-	for i := range worktrees {
-		if worktrees[i].Branch == branch {
-			target = &worktrees[i]
-			break
-		}
-	}
-
+	target := worktree.FindByBranch(worktrees, branch)
 	if target == nil {
 		return fmt.Errorf("no worktree found for branch '%s'", branch)
 	}

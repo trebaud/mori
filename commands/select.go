@@ -5,18 +5,15 @@ import (
 	"os"
 
 	"github.com/moosecode/mori/tui"
+	"github.com/moosecode/mori/worktree"
 )
 
 func Select() {
-	worktrees, err := List()
+	worktrees, err := worktree.List()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	tui.Run(worktrees)
-}
-
-func List() ([]tui.Worktree, error) {
-	return tui.ListWorktrees()
 }

@@ -4,15 +4,16 @@ import (
 	"fmt"
 
 	"github.com/moosecode/mori/agent"
+	"github.com/moosecode/mori/worktree"
 )
 
 func Status() error {
-	worktrees, err := List()
+	worktrees, err := worktree.List()
 	if err != nil {
 		return err
 	}
 
-	counts := map[agent.AgentStatusType]int{}
+	counts := map[agent.StatusType]int{}
 	for _, wt := range worktrees {
 		counts[wt.Insights.Status]++
 	}
