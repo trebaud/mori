@@ -47,6 +47,22 @@ func ClaudeProjectPath(worktreePath string) string {
 	return encoded
 }
 
+// insightsCache stores per-worktree cached insights to avoid redundant I/O.
+type insightsCache struct {
+	// JSONL cache key
+	file    string
+	modTime time.Time
+	size    int64
+
+	// Git cache key
+	headRef string
+
+	// Cached result
+	insights Insights
+}
+
+var cache = make(map[string]*insightsCache)
+
 func GetInsights(worktreePath string) Insights {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -78,7 +94,15 @@ func GetInsights(worktreePath string) Insights {
 	}
 
 	if newestFile == "" {
-		return Insights{Status: StatusNone, Available: true, GitLog: git.Log(worktreePath, 5)}
+		// No session file — only need git data, still cacheable by HEAD ref
+		prev := cache[worktreePath]
+		headRef := git.HeadRef(worktreePath)
+		if prev != nil && prev.file == "" && prev.headRef == headRef {
+			return prev.insights
+		}
+		result := Insights{Status: StatusNone, Available: true, GitLog: git.Log(worktreePath, 5)}
+		cache[worktreePath] = &insightsCache{headRef: headRef, insights: result}
+		return result
 	}
 
 	info, _ := os.Stat(newestFile)
@@ -87,10 +111,28 @@ func GetInsights(worktreePath string) Insights {
 		sessionSize = info.Size()
 	}
 
+	// Check cache: skip re-parse if file unchanged AND HEAD unchanged.
+	headRef := git.HeadRef(worktreePath)
+	prev := cache[worktreePath]
+	if prev != nil && prev.file == newestFile && prev.modTime == newestModTime && prev.size == sessionSize && prev.headRef == headRef {
+		return prev.insights
+	}
+
 	sessionID := strings.TrimSuffix(filepath.Base(newestFile), ".jsonl")
 	parsed := scanSession(newestFile)
 
-	return Insights{
+	// Reuse cached git data if HEAD hasn't changed.
+	var gitLog []string
+	var aheadBehind string
+	if prev != nil && prev.headRef == headRef && prev.headRef != "" {
+		gitLog = prev.insights.GitLog
+		aheadBehind = prev.insights.AheadBehind
+	} else {
+		gitLog = git.Log(worktreePath, 5)
+		aheadBehind = git.AheadBehind(worktreePath)
+	}
+
+	result := Insights{
 		Status:        parsed.status,
 		LastActivity:  newestModTime,
 		SessionSize:   sessionSize,
@@ -105,10 +147,19 @@ func GetInsights(worktreePath string) Insights {
 		MessageCount:  parsed.messageCount,
 		InputTokens:   parsed.inputTokens,
 		HasError:      parsed.hasError,
-		GitLog:        git.Log(worktreePath, 5),
-		AheadBehind:   git.AheadBehind(worktreePath),
+		GitLog:        gitLog,
+		AheadBehind:   aheadBehind,
 		Available:     true,
 	}
+
+	cache[worktreePath] = &insightsCache{
+		file:     newestFile,
+		modTime:  newestModTime,
+		size:     sessionSize,
+		headRef:  headRef,
+		insights: result,
+	}
+	return result
 }
 
 type sessionData struct {
@@ -181,16 +232,17 @@ func scanSession(path string) sessionData {
 			if entry.PermissionMode != "" {
 				result.mode = entry.PermissionMode
 			}
-			text := extractTextFromContent(entry.Message.Content)
-			if text != "" {
-				lastUserTask = text
+			ci := parseContent(entry.Message.Content)
+			if ci.text != "" {
+				lastUserTask = ci.text
 			}
 		case "assistant":
 			if entry.Message.Model != "" {
 				result.model = entry.Message.Model
 			}
-			result.lastTool = extractToolName(entry.Message.Content)
-			result.hasError = checkToolError(entry.Message.Content)
+			ci := parseContent(entry.Message.Content)
+			result.lastTool = ci.toolName
+			result.hasError = ci.hasError
 
 			if entry.Message.Usage.InputTokens > 0 {
 				result.inputTokens = entry.Message.Usage.InputTokens +
@@ -236,53 +288,50 @@ func scanSession(path string) sessionData {
 	return result
 }
 
-func extractTextFromContent(raw json.RawMessage) string {
+type contentInfo struct {
+	text     string // first text block (or plain string content)
+	toolName string // last tool_use name
+	hasError bool   // any tool_result with is_error
+}
+
+func parseContent(raw json.RawMessage) contentInfo {
+	var info contentInfo
+
+	// Try plain string first (user messages can be a simple string).
 	var s string
 	if json.Unmarshal(raw, &s) == nil && s != "" {
-		return s
+		info.text = s
+		return info
 	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(raw, &blocks) == nil {
-		for _, b := range blocks {
-			if b.Type == "text" && b.Text != "" {
-				return b.Text
-			}
-		}
-	}
-	return ""
-}
 
-func extractToolName(raw json.RawMessage) string {
-	var blocks []struct {
-		Type string `json:"type"`
-		Name string `json:"name"`
-	}
-	if json.Unmarshal(raw, &blocks) == nil {
-		for i := len(blocks) - 1; i >= 0; i-- {
-			if blocks[i].Type == "tool_use" && blocks[i].Name != "" {
-				return blocks[i].Name
-			}
-		}
-	}
-	return ""
-}
-
-func checkToolError(raw json.RawMessage) bool {
+	// Otherwise parse as block array once.
 	var blocks []struct {
 		Type    string `json:"type"`
+		Text    string `json:"text"`
+		Name    string `json:"name"`
 		IsError bool   `json:"is_error"`
 	}
-	if json.Unmarshal(raw, &blocks) == nil {
-		for _, b := range blocks {
-			if b.Type == "tool_result" && b.IsError {
-				return true
+	if json.Unmarshal(raw, &blocks) != nil {
+		return info
+	}
+
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			if info.text == "" && b.Text != "" {
+				info.text = b.Text
+			}
+		case "tool_use":
+			if b.Name != "" {
+				info.toolName = b.Name // keep overwriting — we want the last one
+			}
+		case "tool_result":
+			if b.IsError {
+				info.hasError = true
 			}
 		}
 	}
-	return false
+	return info
 }
 
 type modelPricing struct {

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // IsRepo returns true if path contains a .git directory (not a worktree .git file).
@@ -28,9 +29,31 @@ func FindMainRepo(path string) (string, error) {
 	return filepath.Dir(gitCommon), nil
 }
 
+var (
+	defaultBranchMu    sync.RWMutex
+	defaultBranchCache = make(map[string]string)
+)
+
 // DefaultBranch returns the repository's default branch name (e.g. "main" or "master")
 // by checking origin/HEAD, then probing for common branch names.
+// Results are cached per repo path for the lifetime of the process.
 func DefaultBranch(repo string) string {
+	defaultBranchMu.RLock()
+	if cached, ok := defaultBranchCache[repo]; ok {
+		defaultBranchMu.RUnlock()
+		return cached
+	}
+	defaultBranchMu.RUnlock()
+
+	branch := defaultBranchUncached(repo)
+
+	defaultBranchMu.Lock()
+	defaultBranchCache[repo] = branch
+	defaultBranchMu.Unlock()
+	return branch
+}
+
+func defaultBranchUncached(repo string) string {
 	out, err := exec.Command("git", "-C", repo, "symbolic-ref", "refs/remotes/origin/HEAD").Output()
 	if err == nil {
 		parts := strings.Split(strings.TrimSpace(string(out)), "/")
@@ -119,6 +142,15 @@ func RemoveWorktree(path string, force bool) error {
 func HasUncommittedChanges(path string) bool {
 	out, _ := exec.Command("git", "-C", path, "status", "--porcelain").Output()
 	return len(strings.TrimSpace(string(out))) > 0
+}
+
+// HeadRef returns the short HEAD commit hash for the given repo, or "" on error.
+func HeadRef(repoPath string) string {
+	out, err := exec.Command("git", "-C", repoPath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // AheadBehind returns a "+ahead/-behind" string relative to the default branch,

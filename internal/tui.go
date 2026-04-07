@@ -34,6 +34,8 @@ var (
 	boldStyle     = lipgloss.NewStyle().Bold(true)
 	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	successStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
+	barHighStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	barMedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
 )
 
 type inputMode int
@@ -558,9 +560,10 @@ func (m model) viewSideBySide(width int) string {
 	}
 
 	divider := dimStyle.Render("│")
+	leftColStyle := lipgloss.NewStyle().Width(listWidth)
 
 	for i := 0; i < maxLines; i++ {
-		left := lipgloss.NewStyle().Width(listWidth).Render(leftLines[i])
+		left := leftColStyle.Render(leftLines[i])
 		right := rightLines[i]
 		s.WriteString(left + " " + divider + " " + right + "\n")
 	}
@@ -685,7 +688,7 @@ func (m model) renderWorktreeList(width int) string {
 	s.WriteString(dimStyle.Render(strings.Repeat("─", tableW)) + "\n")
 
 	for i, wtIdx := range m.filtered {
-		s.WriteString(renderWorktreeRow(m, i, wtIdx, width) + "\n")
+		s.WriteString(renderWorktreeRow(m, i, wtIdx, branchW, activityW, sessionW) + "\n")
 	}
 
 	if len(m.filtered) == 0 {
@@ -721,9 +724,8 @@ func statusStyle(status agent.StatusType) lipgloss.Style {
 	}
 }
 
-func renderWorktreeRow(m model, cursorIdx, wtIdx int, width int) string {
+func renderWorktreeRow(m model, cursorIdx, wtIdx int, branchW, activityW, sessionW int) string {
 	wt := m.worktrees[wtIdx]
-	branchW, activityW, sessionW := colWidths(width)
 
 	trunc := func(s string, w int) string {
 		if len(s) > w-3 {
@@ -959,9 +961,9 @@ func renderContextBar(percent float64, label string) string {
 	var barStyle lipgloss.Style
 	switch {
 	case percent >= 0.8:
-		barStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+		barStyle = barHighStyle
 	case percent >= 0.5:
-		barStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+		barStyle = barMedStyle
 	default:
 		barStyle = activeStyle
 	}
