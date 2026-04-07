@@ -26,13 +26,6 @@ cd mori
 
 This builds the binary and installs it to your PATH.
 
-### Manual
-
-```bash
-go build -o mori .
-cp mori /usr/local/bin/
-```
-
 ## Usage
 
 ```bash
@@ -142,24 +135,24 @@ Each step runs in the new worktree directory. A failing step prints a warning bu
 
 ## Claude Code Skill
 
-Mori ships with a [Claude Code skill](skills/mori/SKILL.md) that teaches Claude how to use mori on your behalf. Install it by copying the skill into your skills directory:
+Mori includes a [Claude Code skill](skills/mori/SKILL.md) so Claude knows how to run mori commands. Install it by copying the skill into your skills directory:
 
 ```bash
 cp -r skills/mori ~/.agents/skills/mori
 ```
 
-Once installed, Claude can create worktrees, check agent status, and manage branches through natural conversation.
+Once installed, Claude can create worktrees, check agent status, and manage branches directly.
 
 ### Parallel implementation workflows
 
-The skill is especially useful for orchestrating complex workflows. For example, you can ask Claude to spin up multiple worktrees to explore alternative implementations of the same feature in parallel:
+You can also use the skill to run competing implementations side by side:
 
 1. `mori new auth-approach-a --claude` — token-based auth
 2. `mori new auth-approach-b --claude` — session-based auth
 3. `mori list --status working` — monitor both agents as they work
 4. Compare the results side-by-side, then keep the best one and `mori remove` the rest
 
-This turns mori into a lightweight experimentation harness — run competing approaches simultaneously, track their cost and progress in real time, and converge on the winner.
+Run them at the same time, watch cost and progress in the TUI, then keep the best one and `mori remove` the rest.
 
 ## Requirements
 
