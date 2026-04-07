@@ -47,38 +47,52 @@ func ClaudeProjectPath(worktreePath string) string {
 	return encoded
 }
 
-// insightsCache stores per-worktree cached insights to avoid redundant I/O.
-type insightsCache struct {
-	// JSONL cache key
+type cachedInsights struct {
 	file    string
 	modTime time.Time
 	size    int64
-
-	// Git cache key
 	headRef string
 
-	// Cached result
 	insights Insights
 }
 
-var cache = make(map[string]*insightsCache)
+var cache = make(map[string]*cachedInsights)
 
 func GetInsights(worktreePath string) Insights {
+	file, modTime := newestSessionFile(worktreePath)
+	headRef := git.HeadRef(worktreePath)
+
+	if prev := cache[worktreePath]; prev.unchanged(file, modTime, headRef) {
+		return prev.insights
+	}
+
+	result := buildInsights(worktreePath, file, modTime, headRef)
+	cache[worktreePath] = &cachedInsights{
+		file: file, modTime: modTime, size: result.SessionSize,
+		headRef: headRef, insights: result,
+	}
+	return result
+}
+
+func (c *cachedInsights) unchanged(file string, modTime time.Time, headRef string) bool {
+	if c == nil || c.file != file || c.headRef != headRef {
+		return false
+	}
+	return file == "" || (c.modTime == modTime && c.size == fileSize(file))
+}
+
+func newestSessionFile(worktreePath string) (string, time.Time) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return Insights{Status: StatusNone, Available: false}
+		return "", time.Time{}
 	}
-
-	projectDir := filepath.Join(home, ".claude", "projects", ClaudeProjectPath(worktreePath))
-
-	entries, err := os.ReadDir(projectDir)
+	entries, err := os.ReadDir(filepath.Join(home, ".claude", "projects", ClaudeProjectPath(worktreePath)))
 	if err != nil {
-		return Insights{Status: StatusNone, Available: false}
+		return "", time.Time{}
 	}
 
-	var newestFile string
-	var newestModTime time.Time
-
+	var best string
+	var bestTime time.Time
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
@@ -87,57 +101,48 @@ func GetInsights(worktreePath string) Insights {
 		if err != nil {
 			continue
 		}
-		if info.ModTime().After(newestModTime) {
-			newestModTime = info.ModTime()
-			newestFile = filepath.Join(projectDir, e.Name())
+		if info.ModTime().After(bestTime) {
+			bestTime = info.ModTime()
+			best = filepath.Join(filepath.Dir(best), e.Name())
 		}
 	}
-
-	if newestFile == "" {
-		// No session file — only need git data, still cacheable by HEAD ref
-		prev := cache[worktreePath]
-		headRef := git.HeadRef(worktreePath)
-		if prev != nil && prev.file == "" && prev.headRef == headRef {
-			return prev.insights
-		}
-		result := Insights{Status: StatusNone, Available: true, GitLog: git.Log(worktreePath, 5)}
-		cache[worktreePath] = &insightsCache{headRef: headRef, insights: result}
-		return result
+	if best == "" {
+		return "", time.Time{}
 	}
+	dir := filepath.Join(home, ".claude", "projects", ClaudeProjectPath(worktreePath))
+	return filepath.Join(dir, best), bestTime
+}
 
-	info, _ := os.Stat(newestFile)
-	sessionSize := int64(0)
-	if info != nil {
-		sessionSize = info.Size()
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
 	}
+	return info.Size()
+}
 
-	// Check cache: skip re-parse if file unchanged AND HEAD unchanged.
-	headRef := git.HeadRef(worktreePath)
+func gitData(worktreePath, headRef string) ([]string, string) {
 	prev := cache[worktreePath]
-	if prev != nil && prev.file == newestFile && prev.modTime == newestModTime && prev.size == sessionSize && prev.headRef == headRef {
-		return prev.insights
+	if prev != nil && prev.headRef == headRef && headRef != "" {
+		return prev.insights.GitLog, prev.insights.AheadBehind
+	}
+	return git.Log(worktreePath, 5), git.AheadBehind(worktreePath)
+}
+
+func buildInsights(worktreePath, file string, modTime time.Time, headRef string) Insights {
+	gitLog, aheadBehind := gitData(worktreePath, headRef)
+
+	if file == "" {
+		return Insights{Status: StatusNone, Available: true, GitLog: gitLog, AheadBehind: aheadBehind}
 	}
 
-	sessionID := strings.TrimSuffix(filepath.Base(newestFile), ".jsonl")
-	parsed := scanSession(newestFile)
-
-	// Reuse cached git data if HEAD hasn't changed.
-	var gitLog []string
-	var aheadBehind string
-	if prev != nil && prev.headRef == headRef && prev.headRef != "" {
-		gitLog = prev.insights.GitLog
-		aheadBehind = prev.insights.AheadBehind
-	} else {
-		gitLog = git.Log(worktreePath, 5)
-		aheadBehind = git.AheadBehind(worktreePath)
-	}
-
-	result := Insights{
+	parsed := scanSession(file)
+	return Insights{
 		Status:        parsed.status,
-		LastActivity:  newestModTime,
-		SessionSize:   sessionSize,
+		LastActivity:  modTime,
+		SessionSize:   fileSize(file),
 		CurrentTask:   parsed.task,
-		SessionID:     sessionID,
+		SessionID:     strings.TrimSuffix(filepath.Base(file), ".jsonl"),
 		Slug:          parsed.slug,
 		Model:         parsed.model,
 		Mode:          parsed.mode,
@@ -151,15 +156,6 @@ func GetInsights(worktreePath string) Insights {
 		AheadBehind:   aheadBehind,
 		Available:     true,
 	}
-
-	cache[worktreePath] = &insightsCache{
-		file:     newestFile,
-		modTime:  newestModTime,
-		size:     sessionSize,
-		headRef:  headRef,
-		insights: result,
-	}
-	return result
 }
 
 type sessionData struct {
