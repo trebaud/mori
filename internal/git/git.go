@@ -47,9 +47,22 @@ func DefaultBranch(repo string) string {
 }
 
 // Log returns the last n commit summaries for the given repo path.
+// When on a non-default branch, only shows commits unique to that branch.
 func Log(repoPath string, n int) []string {
-	out, err := exec.Command("git", "-C", repoPath, "log", "--oneline",
-		"--pretty=format:%ar: %s", "-n", fmt.Sprintf("%d", n)).Output()
+	args := []string{"-C", repoPath, "log", "--oneline",
+		"--pretty=format:%ar: %s", "-n", fmt.Sprintf("%d", n)}
+
+	// If we're on a feature branch, only show commits not on the default branch.
+	mainBranch := DefaultBranch(repoPath)
+	currentOut, err := exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err == nil {
+		current := strings.TrimSpace(string(currentOut))
+		if current != mainBranch && current != "" && current != "HEAD" {
+			args = append(args, mainBranch+"..HEAD")
+		}
+	}
+
+	out, err := exec.Command("git", args...).Output()
 	if err != nil {
 		return nil
 	}
