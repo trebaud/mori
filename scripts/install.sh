@@ -84,9 +84,9 @@ check_go() {
 
 build_binary() {
   info "Building mori..."
-  cd "$SCRIPT_DIR"
-  go build -o "$BIN_NAME" ./cmd/mori
-  ok "Binary built: $SCRIPT_DIR/$BIN_NAME"
+  mkdir -p bin
+  go build -o bin/"$BIN_NAME" ./cmd/mori
+  ok "Binary built: bin/$BIN_NAME"
 }
 
 install_binary() {
@@ -99,8 +99,7 @@ install_binary() {
     mkdir -p "$bin_dir"
   fi
 
-  rm -f "$bin_dir/$BIN_NAME"
-  cp "$SCRIPT_DIR/$BIN_NAME" "$bin_dir/$BIN_NAME"
+  cp "bin/$BIN_NAME" "$bin_dir/$BIN_NAME"
   chmod +x "$bin_dir/$BIN_NAME"
   ok "Installed: $bin_dir/$BIN_NAME"
 
@@ -139,6 +138,6 @@ printf "    ${CYAN}mori${RESET}                              # interactive TUI\n
 printf "    ${CYAN}mori new feat --claude${RESET}             # create worktree + launch Claude\n"
 printf "    ${CYAN}mori list${RESET}                          # list worktrees\n"
 echo ""
-printf "  ${DIM}Source: $SCRIPT_DIR${RESET}\n"
+printf "  ${DIM}Source: $(pwd)${RESET}\n"
 printf "  ${DIM}Binary: ${INSTALL_BIN_DIR:-/usr/local/bin}/$BIN_NAME${RESET}\n"
 echo ""
