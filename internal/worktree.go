@@ -31,14 +31,15 @@ func List() ([]Worktree, error) {
 		return nil, fmt.Errorf("failed to list worktrees: %w", err)
 	}
 
-	currentBranch := git.CurrentBranch()
-
-	wts := parseList(out, currentBranch)
+	wts := parseList(out)
 
 	home, _ := os.UserHomeDir()
 
 	for i := range wts {
 		wts[i].RelativePath = makeRelativePath(wts[i].Path, mainPath, home)
+		if wts[i].Path == mainPath {
+			wts[i].IsMain = true
+		}
 		wts[i].Insights = agent.GetInsights(wts[i].Path)
 	}
 
@@ -46,7 +47,7 @@ func List() ([]Worktree, error) {
 }
 
 // parseList parses git worktree list --porcelain output into Worktree structs.
-func parseList(output, currentBranch string) []Worktree {
+func parseList(output string) []Worktree {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	var wts []Worktree
 	var current Worktree
@@ -61,9 +62,6 @@ func parseList(output, currentBranch string) []Worktree {
 		} else if strings.HasPrefix(line, "branch ") {
 			parts := strings.Split(line, "/")
 			current.Branch = parts[len(parts)-1]
-			if current.Branch == currentBranch {
-				current.IsMain = true
-			}
 		}
 	}
 	if current.Path != "" {
@@ -140,11 +138,7 @@ func makeRelativePath(path, mainPath, home string) string {
 
 	parts := strings.Split(rel, "/")
 	if len(parts) > 0 {
-		name := parts[len(parts)-1]
-		if mainPath != "" && name == filepath.Base(mainPath) {
-			return "./main"
-		}
-		return "./" + name
+		return "./" + parts[len(parts)-1]
 	}
 	return rel
 }

@@ -658,31 +658,29 @@ func (m model) renderFooter() string {
 	return footerStyle.Render("[?] Help  [i] Insights  [Enter] Select  [q] Quit")
 }
 
-func colWidths(width int) (int, int, int, int) {
-	pathW := 30
-	branchW := 25
+func colWidths(width int) (int, int, int) {
+	branchW := 40
+	activityW := 10
 	sessionW := 12
-	costW := 8
 	if width > 100 {
-		pathW = 40
-		branchW = 30
+		branchW = 50
+		activityW = 12
 	}
-	return pathW, branchW, sessionW, costW
+	return branchW, activityW, sessionW
 }
 
 func (m model) renderWorktreeList(width int) string {
 	var s strings.Builder
 
-	pathW, branchW, sessionW, costW := colWidths(width)
-	tableW := 4 + pathW + branchW + sessionW + costW
+	branchW, activityW, sessionW := colWidths(width)
+	tableW := 4 + branchW + activityW + sessionW
 
 	s.WriteString(dimStyle.Render(strings.Repeat("─", tableW)) + "\n")
 	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
 		dimStyle.Width(4).Render(""),
-		boldStyle.Width(pathW).Render("PATH"),
 		boldStyle.Width(branchW).Render("BRANCH"),
+		dimStyle.Width(activityW).Render("ACTIVITY"),
 		boldStyle.Width(sessionW).Render("SESSION"),
-		dimStyle.Width(costW).Render("COST"),
 	) + "\n")
 	s.WriteString(dimStyle.Render(strings.Repeat("─", tableW)) + "\n")
 
@@ -725,7 +723,7 @@ func statusStyle(status agent.StatusType) lipgloss.Style {
 
 func renderWorktreeRow(m model, cursorIdx, wtIdx int, width int) string {
 	wt := m.worktrees[wtIdx]
-	pathW, branchW, sessionW, costW := colWidths(width)
+	branchW, activityW, sessionW := colWidths(width)
 
 	trunc := func(s string, w int) string {
 		if len(s) > w-3 {
@@ -735,33 +733,35 @@ func renderWorktreeRow(m model, cursorIdx, wtIdx int, width int) string {
 	}
 
 	checkbox := "[ ] "
-	pathVal := trunc(wt.RelativePath, pathW)
-	branchVal := trunc(wt.Branch, branchW)
+
+	branchLabel := wt.Branch
+	if wt.IsMain {
+		branchLabel = "⊙ " + branchLabel
+	}
+	branchVal := trunc(branchLabel, branchW)
+
+	activityVal := "—"
+	if !wt.Insights.LastActivity.IsZero() {
+		activityVal = relativeTime(wt.Insights.LastActivity)
+	}
 
 	icon := statusIcon(wt.Insights.Status)
 	sessionVal := icon + " " + string(wt.Insights.Status)
 	stStyle := statusStyle(wt.Insights.Status)
 
-	costVal := ""
-	if wt.Insights.CostUSD > 0 {
-		costVal = fmt.Sprintf("$%.2f", wt.Insights.CostUSD)
-	}
-
 	if m.cursor == cursorIdx {
 		checkbox = selectedStyle.Render("[*] ")
-		pathVal = selectedStyle.Width(pathW).Render(pathVal)
 		branchVal = selectedStyle.Width(branchW).Render(branchVal)
+		activityVal = dimStyle.Width(activityW).Render(activityVal)
 		sessionVal = stStyle.Width(sessionW).Render(sessionVal)
-		costVal = dimStyle.Width(costW).Render(costVal)
 	} else {
 		checkbox = dimStyle.Render(checkbox)
-		pathVal = dimStyle.Width(pathW).Render(pathVal)
 		branchVal = dimStyle.Width(branchW).Render(branchVal)
+		activityVal = dimStyle.Width(activityW).Render(activityVal)
 		sessionVal = stStyle.Width(sessionW).Render(sessionVal)
-		costVal = dimStyle.Width(costW).Render(costVal)
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, checkbox, pathVal, branchVal, sessionVal, costVal)
+	return lipgloss.JoinHorizontal(lipgloss.Top, checkbox, branchVal, activityVal, sessionVal)
 }
 
 func renderInsightsPanel(m model, width int) string {
