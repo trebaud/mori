@@ -93,7 +93,7 @@ type model struct {
 	worktrees     []Worktree // all worktrees (unfiltered)
 	filtered      []int      // indices into worktrees matching current filter
 	cursor        int
-	selected      string
+	selected      int // -1 means nothing selected, otherwise index into worktrees
 	currentBranch string
 	width         int
 	height        int
@@ -128,6 +128,7 @@ func Run(worktrees []Worktree) {
 	p := tea.NewProgram(model{
 		worktrees:     worktrees,
 		filtered:      filtered,
+		selected:      -1,
 		currentBranch: currentBranch,
 		showInsights:  false,
 		tick:          time.Now(),
@@ -142,15 +143,21 @@ func Run(worktrees []Worktree) {
 		os.Exit(1)
 	}
 
-	if finalModel, ok := m.(model); ok && finalModel.selected != "" {
+	if finalModel, ok := m.(model); ok && finalModel.selected >= 0 {
 		claudePath, err := exec.LookPath("claude")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: claude not found in PATH\n")
 			os.Exit(1)
 		}
-		wtName := filepath.Base(finalModel.selected)
-		fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("claude --worktree "+wtName))
-		syscall.Exec(claudePath, []string{"claude", "--worktree", wtName}, os.Environ())
+		wt := finalModel.worktrees[finalModel.selected]
+		if wt.Insights.SessionID != "" {
+			fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("claude --resume "+wt.Insights.SessionID+" --worktree "+filepath.Base(wt.Path)))
+			syscall.Exec(claudePath, []string{"claude", "--resume", wt.Insights.SessionID, "--worktree", filepath.Base(wt.Path)}, os.Environ())
+		} else {
+			wtName := filepath.Base(wt.Path)
+			fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("claude --worktree "+wtName))
+			syscall.Exec(claudePath, []string{"claude", "--worktree", wtName}, os.Environ())
+		}
 	}
 }
 
@@ -317,8 +324,8 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 	case "enter":
-		if wt := m.selectedWorktree(); wt != nil {
-			m.selected = wt.Path
+		if m.cursor < len(m.filtered) {
+			m.selected = m.filtered[m.cursor]
 			return m, tea.Quit
 		}
 		return m, tea.Quit
