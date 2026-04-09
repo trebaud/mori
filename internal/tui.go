@@ -3,8 +3,11 @@ package internal
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -140,7 +143,14 @@ func Run(worktrees []Worktree) {
 	}
 
 	if finalModel, ok := m.(model); ok && finalModel.selected != "" {
-		fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("cd "+finalModel.selected))
+		claudePath, err := exec.LookPath("claude")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: claude not found in PATH\n")
+			os.Exit(1)
+		}
+		wtName := filepath.Base(finalModel.selected)
+		fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("claude --worktree "+wtName))
+		syscall.Exec(claudePath, []string{"claude", "--worktree", wtName}, os.Environ())
 	}
 }
 
@@ -309,7 +319,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if wt := m.selectedWorktree(); wt != nil {
 			m.selected = wt.Path
-			return m, tea.Batch(tea.SetClipboard("cd "+wt.Path), tea.Quit)
+			return m, tea.Quit
 		}
 		return m, tea.Quit
 	case "i":
@@ -353,6 +363,11 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 				m.deleteTarget = m.cursor
 				m.forceDelete = true
 			}
+		}
+	case "c":
+		if wt := m.selectedWorktree(); wt != nil {
+			m.statusMsg = &statusMsg{text: "Path copied to clipboard", expires: time.Now().Add(3 * time.Second)}
+			return m, tea.SetClipboard(wt.Path)
 		}
 	case "s":
 		m.sortMode = (m.sortMode + 1) % 4
@@ -595,7 +610,7 @@ func (m model) viewHelp(width int) string {
 	}{
 		{"Navigation", []struct{ key, desc string }{
 			{"j/k, ↑/↓", "Move cursor up/down"},
-			{"Enter", "Select worktree (copy cd to clipboard)"},
+			{"Enter", "Open Claude Code in worktree"},
 			{"q, Ctrl+C", "Quit"},
 		}},
 		{"Views", []struct{ key, desc string }{
@@ -606,6 +621,7 @@ func (m model) viewHelp(width int) string {
 			{"n", "Create new worktree"},
 			{"d", "Delete worktree"},
 			{"D", "Force delete (skip active session check)"},
+			{"c", "Copy worktree path to clipboard"},
 			{"r", "Refresh insights now"},
 		}},
 		{"Search & Sort", []struct{ key, desc string }{
@@ -656,9 +672,9 @@ func (m model) renderFooter() string {
 		return footerStyle.Render("[Enter] Apply  [Esc] Clear  [↑/↓] Navigate")
 	}
 	if m.showInsights {
-		return footerStyle.Render("[?] Help  [i] Hide Insights  [Enter] Select  [q] Quit")
+		return footerStyle.Render("[?] Help  [i] Hide Insights  [Enter] Open Claude  [q] Quit")
 	}
-	return footerStyle.Render("[?] Help  [i] Insights  [Enter] Select  [q] Quit")
+	return footerStyle.Render("[?] Help  [i] Insights  [Enter] Open Claude  [q] Quit")
 }
 
 func colWidths(width int) (int, int, int) {
