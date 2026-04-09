@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -162,36 +161,47 @@ type model struct {
 }
 
 func Run(worktrees []Worktree) {
-	currentBranch := git.CurrentBranch()
+	for {
+		currentBranch := git.CurrentBranch()
 
-	ti := textinput.New()
-	ti.CharLimit = 60
+		ti := textinput.New()
+		ti.CharLimit = 60
 
-	filtered := make([]int, len(worktrees))
-	for i := range worktrees {
-		filtered[i] = i
-	}
+		// Refresh worktrees on each loop iteration (except first)
+		if refreshed, err := List(); err == nil {
+			worktrees = refreshed
+		}
 
-	p := tea.NewProgram(model{
-		worktrees:     worktrees,
-		filtered:      filtered,
-		selected:      -1,
-		currentBranch: currentBranch,
-		showInsights:  false,
-		tick:          time.Now(),
-		textInput:     ti,
-		mode:          modeNormal,
-		sortMode:      sortDefault,
-		archived:      loadArchived(),
-	})
+		filtered := make([]int, len(worktrees))
+		for i := range worktrees {
+			filtered[i] = i
+		}
 
-	m, err := p.Run()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
-		os.Exit(1)
-	}
+		p := tea.NewProgram(model{
+			worktrees:     worktrees,
+			filtered:      filtered,
+			selected:      -1,
+			currentBranch: currentBranch,
+			showInsights:  false,
+			tick:          time.Now(),
+			textInput:     ti,
+			mode:          modeNormal,
+			sortMode:      sortDefault,
+			archived:      loadArchived(),
+		})
 
-	if finalModel, ok := m.(model); ok && finalModel.selected >= 0 {
+		m, err := p.Run()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+			os.Exit(1)
+		}
+
+		finalModel, ok := m.(model)
+		if !ok || finalModel.selected < 0 {
+			// User quit without selecting — exit
+			return
+		}
+
 		claudePath, err := exec.LookPath("claude")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: claude not found in PATH\n")
@@ -215,14 +225,18 @@ func Run(worktrees []Worktree) {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err == nil {
-				os.Exit(0)
+				continue // Return to TUI
 			}
 			// Resume failed (session may no longer exist), start fresh
 		}
 
-		args := append([]string{"claude"}, baseArgs...)
-		fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render(strings.Join(args, " ")))
-		syscall.Exec(claudePath, args, os.Environ())
+		fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("claude "+strings.Join(baseArgs, " ")))
+		cmd := exec.Command(claudePath, baseArgs...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Run()
+		// Return to TUI after launching tmux session
 	}
 }
 
