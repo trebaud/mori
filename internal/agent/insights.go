@@ -172,6 +172,8 @@ type sessionData struct {
 	hasError      bool
 }
 
+const maxScanBytes = 10 * 1024 * 1024 // 10 MB tail limit for large session files
+
 func scanSession(path string) sessionData {
 	file, err := os.Open(path)
 	if err != nil {
@@ -179,13 +181,28 @@ func scanSession(path string) sessionData {
 	}
 	defer file.Close()
 
+	// For very large files, only read the tail to avoid excessive memory usage.
+	// Cost will be approximate but the process won't get OOM-killed.
+	if info, err := file.Stat(); err == nil && info.Size() > maxScanBytes {
+		file.Seek(info.Size()-maxScanBytes, 0)
+		// Discard the first partial line after seeking.
+		buf := bufio.NewReader(file)
+		buf.ReadBytes('\n')
+		scanner := bufio.NewScanner(buf)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		return scanFromReader(scanner)
+	}
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	return scanFromReader(scanner)
+}
+
+func scanFromReader(scanner *bufio.Scanner) sessionData {
 	var result sessionData
 	var lastType string
 	var lastLine string
 	var lastUserTask string
-
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	var entry struct {
 		Type    string `json:"type"`
