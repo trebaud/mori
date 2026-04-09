@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -48,6 +49,7 @@ const (
 	modeSearch
 	modeCreate
 	modeConfirmDelete
+	modeMessage // send message to WAITING agent
 )
 
 type sortMode int
@@ -68,7 +70,47 @@ func (s sortMode) String() string {
 	case sortName:
 		return "name"
 	default:
-		return ""
+		return "default"
+	}
+}
+
+type statusFilter int
+
+const (
+	filterAll statusFilter = iota
+	filterWorking
+	filterWaiting
+	filterIdle
+	filterNone
+)
+
+func (f statusFilter) String() string {
+	switch f {
+	case filterWorking:
+		return "WORKING"
+	case filterWaiting:
+		return "WAITING"
+	case filterIdle:
+		return "IDLE"
+	case filterNone:
+		return "NONE"
+	default:
+		return "ALL"
+	}
+}
+
+func (f statusFilter) matches(status agent.StatusType) bool {
+	switch f {
+	case filterWorking:
+		return status == agent.StatusWorking
+	case filterWaiting:
+		return status == agent.StatusWait
+	case filterIdle:
+		return status == agent.StatusIdle
+	case filterNone:
+		return status == agent.StatusNone
+	default:
+		return true
 	}
 }
 
@@ -106,12 +148,17 @@ type model struct {
 	textInput textinput.Model
 	statusMsg *statusMsg
 
-	// Sort
-	sortMode sortMode
+	// Sort & filter
+	sortMode     sortMode
+	statusFilter statusFilter
 
 	// Delete confirmation
 	deleteTarget int  // index in filtered list
 	forceDelete  bool // true when triggered by D key
+
+	// Archive
+	archived    map[string]bool // branch names that are archived
+	showArchive bool            // when true, show archived worktrees
 }
 
 func Run(worktrees []Worktree) {
@@ -135,6 +182,7 @@ func Run(worktrees []Worktree) {
 		textInput:     ti,
 		mode:          modeNormal,
 		sortMode:      sortDefault,
+		archived:      loadArchived(),
 	})
 
 	m, err := p.Run()
@@ -209,19 +257,26 @@ func (m *model) refreshInsights() {
 
 func (m *model) applyFilter() {
 	query := strings.ToLower(m.textInput.Value())
-	if m.mode != modeSearch || query == "" {
-		m.filtered = make([]int, len(m.worktrees))
-		for i := range m.worktrees {
-			m.filtered[i] = i
+	searchActive := m.mode == modeSearch && query != ""
+
+	m.filtered = nil
+	for i, wt := range m.worktrees {
+		// Archive filter
+		if !m.showArchive && m.archived[wt.Branch] {
+			continue
 		}
-	} else {
-		m.filtered = nil
-		for i, wt := range m.worktrees {
-			if strings.Contains(strings.ToLower(wt.Branch), query) ||
-				strings.Contains(strings.ToLower(wt.RelativePath), query) {
-				m.filtered = append(m.filtered, i)
+		// Text search filter
+		if searchActive {
+			if !strings.Contains(strings.ToLower(wt.Branch), query) &&
+				!strings.Contains(strings.ToLower(wt.RelativePath), query) {
+				continue
 			}
 		}
+		// Status filter
+		if !m.statusFilter.matches(wt.Insights.Status) {
+			continue
+		}
+		m.filtered = append(m.filtered, i)
 	}
 	m.applySort()
 	if m.cursor >= len(m.filtered) {
@@ -307,6 +362,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case messageSentMsg:
+		if msg.err != nil {
+			m.statusMsg = &statusMsg{text: "Message failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
+		} else {
+			m.statusMsg = &statusMsg{text: "Message sent", expires: time.Now().Add(3 * time.Second)}
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
@@ -323,6 +386,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleCreateKey(msg, key)
 	case modeConfirmDelete:
 		return m.handleDeleteKey(key)
+	case modeMessage:
+		return m.handleMessageKey(msg, key)
 	default:
 		return m.handleNormalKey(key)
 	}
@@ -332,6 +397,8 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+
+	// Navigation
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
@@ -340,7 +407,33 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		if m.cursor < len(m.filtered)-1 {
 			m.cursor++
 		}
-	case "enter":
+	case "g":
+		m.cursor = 0
+	case "G":
+		if len(m.filtered) > 0 {
+			m.cursor = len(m.filtered) - 1
+		}
+	case "ctrl+d":
+		half := m.height / 4 // approximate half-page
+		if half < 1 {
+			half = 5
+		}
+		m.cursor += half
+		if m.cursor >= len(m.filtered) {
+			m.cursor = max(0, len(m.filtered)-1)
+		}
+	case "ctrl+u":
+		half := m.height / 4
+		if half < 1 {
+			half = 5
+		}
+		m.cursor -= half
+		if m.cursor < 0 {
+			m.cursor = 0
+		}
+
+	// Open worktree (was enter, now o)
+	case "o":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
 				m.statusMsg = &statusMsg{text: "Cannot open default branch (--tmux requires --worktree)", isError: true, expires: time.Now().Add(3 * time.Second)}
@@ -349,8 +442,11 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			m.selected = m.filtered[m.cursor]
 			return m, tea.Quit
 		}
-	case "i":
+
+	// Enter toggles insights for selected worktree
+	case "enter":
 		m.showInsights = !m.showInsights
+
 	case "r":
 		m.refreshInsights()
 		m.applyFilter()
@@ -391,14 +487,73 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 				m.forceDelete = true
 			}
 		}
-	case "c":
+
+	// Yank (copy path) — vim convention
+	case "y":
 		if wt := m.selectedWorktree(); wt != nil {
-			m.statusMsg = &statusMsg{text: "Path copied to clipboard", expires: time.Now().Add(3 * time.Second)}
+			m.statusMsg = &statusMsg{text: "Path yanked to clipboard", expires: time.Now().Add(3 * time.Second)}
 			return m, tea.SetClipboard(wt.Path)
 		}
+
+	// Sort & filter
 	case "s":
 		m.sortMode = (m.sortMode + 1) % 4
 		m.applyFilter()
+	case "f":
+		m.statusFilter = (m.statusFilter + 1) % 5
+		m.applyFilter()
+
+	// Jump to next WORKING/WAITING worktree
+	case "w":
+		if len(m.filtered) > 0 {
+			for offset := 1; offset <= len(m.filtered); offset++ {
+				idx := (m.cursor + offset) % len(m.filtered)
+				wt := m.worktrees[m.filtered[idx]]
+				if wt.Insights.Status == agent.StatusWorking || wt.Insights.Status == agent.StatusWait {
+					m.cursor = idx
+					return m, nil
+				}
+			}
+			m.statusMsg = &statusMsg{text: "No active worktrees", expires: time.Now().Add(2 * time.Second)}
+		}
+
+	// Message a WAITING agent
+	case "m":
+		if wt := m.selectedWorktree(); wt != nil {
+			if wt.Insights.Status != agent.StatusWait {
+				m.statusMsg = &statusMsg{text: "Agent is not WAITING", isError: true, expires: time.Now().Add(3 * time.Second)}
+			} else {
+				m.mode = modeMessage
+				m.textInput.Placeholder = "message to send..."
+				m.textInput.SetValue("")
+				return m, m.textInput.Focus()
+			}
+		}
+
+	// Archive/unarchive
+	case "x":
+		if wt := m.selectedWorktree(); wt != nil {
+			if wt.IsMain {
+				m.statusMsg = &statusMsg{text: "Cannot archive main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
+			} else if m.archived[wt.Branch] {
+				delete(m.archived, wt.Branch)
+				saveArchived(m.archived)
+				m.statusMsg = &statusMsg{text: "Unarchived " + wt.Branch, expires: time.Now().Add(3 * time.Second)}
+			} else {
+				m.archived[wt.Branch] = true
+				saveArchived(m.archived)
+				m.statusMsg = &statusMsg{text: "Archived " + wt.Branch, expires: time.Now().Add(3 * time.Second)}
+				m.applyFilter()
+			}
+		}
+	case "X":
+		m.showArchive = !m.showArchive
+		m.applyFilter()
+		if m.showArchive {
+			m.statusMsg = &statusMsg{text: "Showing archived worktrees", expires: time.Now().Add(2 * time.Second)}
+		} else {
+			m.statusMsg = &statusMsg{text: "Hiding archived worktrees", expires: time.Now().Add(2 * time.Second)}
+		}
 	}
 	return m, nil
 }
@@ -468,6 +623,57 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 	}
 	return m, nil
+}
+
+// messageSentMsg is sent when a message to a WAITING agent completes
+type messageSentMsg struct {
+	err error
+}
+
+func (m model) handleMessageKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.mode = modeNormal
+		m.textInput.Blur()
+		return m, nil
+	case "enter":
+		text := strings.TrimSpace(m.textInput.Value())
+		if text == "" {
+			m.mode = modeNormal
+			m.textInput.Blur()
+			return m, nil
+		}
+		wt := m.selectedWorktree()
+		if wt == nil {
+			m.mode = modeNormal
+			m.textInput.Blur()
+			return m, nil
+		}
+		m.mode = modeNormal
+		m.textInput.Blur()
+		m.statusMsg = &statusMsg{text: "Sending message...", expires: time.Now().Add(10 * time.Second)}
+		return m, m.sendMessageCmd(wt.Path, text)
+	}
+
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+	return m, cmd
+}
+
+func (m model) sendMessageCmd(worktreePath, text string) tea.Cmd {
+	return func() tea.Msg {
+		claudePath, err := exec.LookPath("claude")
+		if err != nil {
+			return messageSentMsg{err: fmt.Errorf("claude not found in PATH")}
+		}
+		cmd := exec.Command(claudePath, "--worktree", filepath.Base(worktreePath), "--yes", "-p", text)
+		if err := cmd.Run(); err != nil {
+			return messageSentMsg{err: err}
+		}
+		return messageSentMsg{}
+	}
 }
 
 func (m model) createWorktreeCmd(branch string) tea.Cmd {
@@ -541,8 +747,8 @@ func (m model) View() tea.View {
 
 func (m model) renderHeader() string {
 	header := " " + headerStyle.Render("MORI") + dimStyle.Render(" | Current: ") + selectedStyle.Render(m.currentBranch)
-	if m.sortMode != sortDefault {
-		header += dimStyle.Render(" | Sort: ") + footerStyle.Render(m.sortMode.String())
+	if m.statusFilter != filterAll {
+		header += dimStyle.Render(" | Filter: ") + footerStyle.Render(m.statusFilter.String())
 	}
 	return header
 }
@@ -637,24 +843,31 @@ func (m model) viewHelp(width int) string {
 	}{
 		{"Navigation", []struct{ key, desc string }{
 			{"j/k, ↑/↓", "Move cursor up/down"},
-			{"Enter", "Open Claude Code in worktree"},
+			{"g / G", "Jump to first / last"},
+			{"Ctrl+d/u", "Half-page down / up"},
+			{"w", "Jump to next WORKING/WAITING"},
+			{"o", "Open Claude Code in worktree"},
+			{"Enter", "Toggle insights panel"},
 			{"q, Ctrl+C", "Quit"},
-		}},
-		{"Views", []struct{ key, desc string }{
-			{"i", "Toggle insights panel"},
-			{"?", "Toggle this help"},
 		}},
 		{"Actions", []struct{ key, desc string }{
 			{"n", "Create new worktree"},
 			{"d", "Delete worktree"},
-			{"D", "Force delete (skip active session check)"},
-			{"c", "Copy worktree path to clipboard"},
+			{"D", "Force delete (skip active check)"},
+			{"y", "Yank (copy) worktree path"},
+			{"m", "Message a WAITING agent"},
 			{"r", "Refresh insights now"},
+			{"?", "Toggle this help"},
 		}},
 		{"Search & Sort", []struct{ key, desc string }{
-			{"/", "Filter by branch/path"},
-			{"s", "Cycle sort mode"},
+			{"/", "Search by branch/path"},
+			{"s", "Cycle sort (default/status/activity/name)"},
+			{"f", "Cycle status filter (all/working/waiting/idle/none)"},
 			{"Esc", "Clear filter / cancel"},
+		}},
+		{"Archive", []struct{ key, desc string }{
+			{"x", "Archive / unarchive worktree"},
+			{"X", "Toggle show archived"},
 		}},
 	}
 
@@ -677,6 +890,8 @@ func (m model) renderInputLine() string {
 		return " " + dimStyle.Render("/") + " " + m.textInput.View()
 	case modeCreate:
 		return " " + headerStyle.Render("New worktree: ") + m.textInput.View()
+	case modeMessage:
+		return " " + waitingStyle.Render("Message: ") + m.textInput.View()
 	case modeConfirmDelete:
 		if m.deleteTarget < len(m.filtered) {
 			wt := m.worktrees[m.filtered[m.deleteTarget]]
@@ -698,28 +913,44 @@ func (m model) renderFooter() string {
 	if m.mode == modeSearch {
 		return footerStyle.Render("[Enter] Apply  [Esc] Clear  [↑/↓] Navigate")
 	}
-	if m.showInsights {
-		return footerStyle.Render("[?] Help  [i] Hide Insights  [Enter] Open Claude  [q] Quit")
+	if m.mode == modeMessage {
+		return footerStyle.Render("[Enter] Send  [Esc] Cancel")
 	}
-	return footerStyle.Render("[?] Help  [i] Insights  [Enter] Open Claude  [q] Quit")
+
+	var parts []string
+	parts = append(parts, "[?] Help  [o] Open  [q] Quit")
+
+	// Sort & filter indicators
+	var indicators []string
+	indicators = append(indicators, "sort:"+m.sortMode.String())
+	if m.statusFilter != filterAll {
+		indicators = append(indicators, "filter:"+m.statusFilter.String())
+	}
+	if m.showArchive {
+		indicators = append(indicators, "archived:shown")
+	}
+	parts = append(parts, strings.Join(indicators, " "))
+
+	return footerStyle.Render(strings.Join(parts, "  "))
 }
 
-func colWidths(width int) (int, int, int) {
-	branchW := 40
+func colWidths(width int) (int, int, int, int) {
+	branchW := 34
 	activityW := 10
 	sessionW := 12
+	contextW := 10
 	if width > 100 {
-		branchW = 50
+		branchW = 44
 		activityW = 12
 	}
-	return branchW, activityW, sessionW
+	return branchW, activityW, sessionW, contextW
 }
 
 func (m model) renderWorktreeList(width int) string {
 	var s strings.Builder
 
-	branchW, activityW, sessionW := colWidths(width)
-	tableW := 4 + branchW + activityW + sessionW
+	branchW, activityW, sessionW, contextW := colWidths(width)
+	tableW := 4 + branchW + activityW + sessionW + contextW
 
 	s.WriteString(dimStyle.Render(strings.Repeat("─", tableW)) + "\n")
 	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
@@ -727,11 +958,12 @@ func (m model) renderWorktreeList(width int) string {
 		boldStyle.Width(branchW).Render("BRANCH"),
 		dimStyle.Width(activityW).Render("ACTIVITY"),
 		boldStyle.Width(sessionW).Render("SESSION"),
+		dimStyle.Width(contextW).Render("CONTEXT"),
 	) + "\n")
 	s.WriteString(dimStyle.Render(strings.Repeat("─", tableW)) + "\n")
 
 	for i, wtIdx := range m.filtered {
-		s.WriteString(renderWorktreeRow(m, i, wtIdx, branchW, activityW, sessionW) + "\n")
+		s.WriteString(renderWorktreeRow(m, i, wtIdx, branchW, activityW, sessionW, contextW) + "\n")
 	}
 
 	if len(m.filtered) == 0 {
@@ -767,7 +999,25 @@ func statusStyle(status agent.StatusType) lipgloss.Style {
 	}
 }
 
-func renderWorktreeRow(m model, cursorIdx, wtIdx int, branchW, activityW, sessionW int) string {
+// Row background styles for status colorization
+var (
+	rowWorkingBg = lipgloss.NewStyle().Background(lipgloss.Color("52"))  // faint red/orange
+	rowWaitingBg = lipgloss.NewStyle().Background(lipgloss.Color("58"))  // faint yellow
+	rowDefaultBg = lipgloss.NewStyle()
+)
+
+func rowBgStyle(status agent.StatusType) lipgloss.Style {
+	switch status {
+	case agent.StatusWorking:
+		return rowWorkingBg
+	case agent.StatusWait:
+		return rowWaitingBg
+	default:
+		return rowDefaultBg
+	}
+}
+
+func renderWorktreeRow(m model, cursorIdx, wtIdx int, branchW, activityW, sessionW, contextW int) string {
 	wt := m.worktrees[wtIdx]
 
 	trunc := func(s string, w int) string {
@@ -783,6 +1033,9 @@ func renderWorktreeRow(m model, cursorIdx, wtIdx int, branchW, activityW, sessio
 	if wt.IsMain {
 		branchLabel = "⊙ " + branchLabel
 	}
+	if m.archived[wt.Branch] {
+		branchLabel = "⌀ " + branchLabel
+	}
 	branchVal := trunc(branchLabel, branchW)
 
 	activityVal := "—"
@@ -794,19 +1047,54 @@ func renderWorktreeRow(m model, cursorIdx, wtIdx int, branchW, activityW, sessio
 	sessionVal := icon + " " + string(wt.Insights.Status)
 	stStyle := statusStyle(wt.Insights.Status)
 
+	// Inline context usage
+	contextVal := renderInlineContext(wt.Insights)
+
 	if m.cursor == cursorIdx {
 		checkbox = selectedStyle.Render("[*] ")
 		branchVal = selectedStyle.Width(branchW).Render(branchVal)
 		activityVal = dimStyle.Width(activityW).Render(activityVal)
 		sessionVal = stStyle.Width(sessionW).Render(sessionVal)
+		contextVal = lipgloss.NewStyle().Width(contextW).Render(contextVal)
 	} else {
 		checkbox = dimStyle.Render(checkbox)
 		branchVal = dimStyle.Width(branchW).Render(branchVal)
 		activityVal = dimStyle.Width(activityW).Render(activityVal)
 		sessionVal = stStyle.Width(sessionW).Render(sessionVal)
+		contextVal = lipgloss.NewStyle().Width(contextW).Render(contextVal)
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, checkbox, branchVal, activityVal, sessionVal)
+	row := lipgloss.JoinHorizontal(lipgloss.Top, checkbox, branchVal, activityVal, sessionVal, contextVal)
+
+	// Apply row background tint for WORKING/WAITING
+	if bg := rowBgStyle(wt.Insights.Status); wt.Insights.Status == agent.StatusWorking || wt.Insights.Status == agent.StatusWait {
+		row = bg.Render(row)
+	}
+
+	return row
+}
+
+func renderInlineContext(ins agent.Insights) string {
+	if ins.InputTokens <= 0 {
+		return "—"
+	}
+	maxTokens := contextMaxTokens(ins.Model)
+	percent := float64(ins.InputTokens) / float64(maxTokens)
+	if percent > 1 {
+		percent = 1
+	}
+	pct := int(percent * 100)
+
+	var style lipgloss.Style
+	switch {
+	case percent >= 0.8:
+		style = barHighStyle
+	case percent >= 0.5:
+		style = barMedStyle
+	default:
+		style = activeStyle
+	}
+	return style.Render(fmt.Sprintf("%d%%", pct))
 }
 
 func renderInsightsPanel(m model, width int) string {
@@ -1012,4 +1300,38 @@ func renderContextBar(percent float64, label string) string {
 	}
 
 	return dimStyle.Render("[") + barStyle.Render(bar) + dimStyle.Render("] ") + dimStyle.Render(label)
+}
+
+// --- Archive persistence ---
+
+func archivePath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".mori", "archived.json")
+}
+
+func loadArchived() map[string]bool {
+	data, err := os.ReadFile(archivePath())
+	if err != nil {
+		return make(map[string]bool)
+	}
+	var branches []string
+	if json.Unmarshal(data, &branches) != nil {
+		return make(map[string]bool)
+	}
+	m := make(map[string]bool, len(branches))
+	for _, b := range branches {
+		m[b] = true
+	}
+	return m
+}
+
+func saveArchived(m map[string]bool) {
+	var branches []string
+	for b := range m {
+		branches = append(branches, b)
+	}
+	sort.Strings(branches)
+	data, _ := json.Marshal(branches)
+	os.MkdirAll(filepath.Dir(archivePath()), 0755)
+	os.WriteFile(archivePath(), data, 0644)
 }
