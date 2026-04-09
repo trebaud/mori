@@ -158,7 +158,8 @@ Run them at the same time, watch cost and progress in the TUI, then keep the bes
 
 - Go 1.21+
 - Git
-- Claude Code (optional, for agent insights)
+- [tmux](https://github.com/tmux/tmux) (used to launch and manage Claude Code sessions)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (for agent sessions and insights)
 
 ## License
 

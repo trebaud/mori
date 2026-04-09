@@ -64,6 +64,24 @@ version_gte() {
   [ "$(printf '%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]
 }
 
+check_tmux() {
+  if ! command -v tmux &>/dev/null; then
+    fail "tmux is not installed. Install it first:
+    macOS:  brew install tmux
+    Linux:  sudo apt install tmux  (or your distro's equivalent)"
+  fi
+  ok "tmux: $(tmux -V)"
+}
+
+check_claude() {
+  if ! command -v claude &>/dev/null; then
+    warn "Claude Code is not installed. Agent insights require it.
+    Install: npm install -g @anthropic-ai/claude-code"
+  else
+    ok "claude: $(claude --version 2>/dev/null || echo 'installed')"
+  fi
+}
+
 check_go() {
   if ! command -v go &>/dev/null; then
     fail "go is not installed. Install it first:
@@ -124,6 +142,8 @@ echo ""
 
 check_os
 check_git
+check_tmux
+check_claude
 check_go
 echo ""
 
