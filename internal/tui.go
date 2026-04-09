@@ -1013,21 +1013,15 @@ func statusStyle(status agent.StatusType) lipgloss.Style {
 	}
 }
 
-// Row background styles for status colorization
-var (
-	rowWorkingBg = lipgloss.NewStyle().Background(lipgloss.Color("52"))  // faint red/orange
-	rowWaitingBg = lipgloss.NewStyle().Background(lipgloss.Color("58"))  // faint yellow
-	rowDefaultBg = lipgloss.NewStyle()
-)
-
-func rowBgStyle(status agent.StatusType) lipgloss.Style {
+// Row left-border indicators for status
+func rowPrefix(status agent.StatusType) string {
 	switch status {
 	case agent.StatusWorking:
-		return rowWorkingBg
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("▎")
 	case agent.StatusWait:
-		return rowWaitingBg
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("▎")
 	default:
-		return rowDefaultBg
+		return " "
 	}
 }
 
@@ -1078,12 +1072,8 @@ func renderWorktreeRow(m model, cursorIdx, wtIdx int, branchW, activityW, sessio
 		contextVal = lipgloss.NewStyle().Width(contextW).Render(contextVal)
 	}
 
-	row := lipgloss.JoinHorizontal(lipgloss.Top, checkbox, branchVal, activityVal, sessionVal, contextVal)
-
-	// Apply row background tint for WORKING/WAITING
-	if bg := rowBgStyle(wt.Insights.Status); wt.Insights.Status == agent.StatusWorking || wt.Insights.Status == agent.StatusWait {
-		row = bg.Render(row)
-	}
+	prefix := rowPrefix(wt.Insights.Status)
+	row := lipgloss.JoinHorizontal(lipgloss.Top, prefix, checkbox, branchVal, activityVal, sessionVal, contextVal)
 
 	return row
 }
