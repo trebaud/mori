@@ -150,14 +150,31 @@ func Run(worktrees []Worktree) {
 			os.Exit(1)
 		}
 		wt := finalModel.worktrees[finalModel.selected]
-		if wt.Insights.SessionID != "" {
-			fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("claude --resume "+wt.Insights.SessionID+" --worktree "+filepath.Base(wt.Path)))
-			syscall.Exec(claudePath, []string{"claude", "--resume", wt.Insights.SessionID, "--worktree", filepath.Base(wt.Path)}, os.Environ())
-		} else {
-			wtName := filepath.Base(wt.Path)
-			fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("claude --worktree "+wtName))
-			syscall.Exec(claudePath, []string{"claude", "--worktree", wtName}, os.Environ())
+
+		// Build args: use --worktree only for non-default branches
+		// (the default branch lives in the main repo, not a worktree)
+		baseArgs := []string{"--tmux"}
+		defaultBranch := git.DefaultBranch(".")
+		if wt.Branch != defaultBranch {
+			baseArgs = append(baseArgs, "--worktree", filepath.Base(wt.Path))
 		}
+
+		if wt.Insights.SessionID != "" {
+			args := append([]string{"--resume", wt.Insights.SessionID}, baseArgs...)
+			fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("claude "+strings.Join(args, " ")))
+			cmd := exec.Command(claudePath, args...)
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err == nil {
+				os.Exit(0)
+			}
+			// Resume failed (session may no longer exist), start fresh
+		}
+
+		args := append([]string{"claude"}, baseArgs...)
+		fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render(strings.Join(args, " ")))
+		syscall.Exec(claudePath, args, os.Environ())
 	}
 }
 
@@ -324,11 +341,14 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 	case "enter":
-		if m.cursor < len(m.filtered) {
+		if wt := m.selectedWorktree(); wt != nil {
+			if wt.IsMain {
+				m.statusMsg = &statusMsg{text: "Cannot open default branch (--tmux requires --worktree)", isError: true, expires: time.Now().Add(3 * time.Second)}
+				return m, nil
+			}
 			m.selected = m.filtered[m.cursor]
 			return m, tea.Quit
 		}
-		return m, tea.Quit
 	case "i":
 		m.showInsights = !m.showInsights
 	case "r":

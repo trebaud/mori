@@ -125,7 +125,15 @@ func HasCommits(repo string) (bool, error) {
 
 // AddWorktree creates a new worktree at dir on a new branch based on baseBranch.
 func AddWorktree(repo, dir, branch, baseBranch string) error {
-	return exec.Command("git", "-C", repo, "worktree", "add", dir, "-b", branch, baseBranch).Run()
+	cmd := exec.Command("git", "-C", repo, "worktree", "add", dir, "-b", branch, baseBranch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+		return err
+	}
+	return nil
 }
 
 // RemoveWorktree removes a git worktree. If force is true, --force is passed.
