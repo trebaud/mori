@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"image/color"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,20 +35,44 @@ func insightsPaneWidth(total int) int {
 	return w
 }
 
+// Palette — narrowed to one accent + functional colors; everything else is grayscale.
 var (
-	headerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-	activeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
-	noneStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	footerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	workingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	waitingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
+	colAccent  = lipgloss.Color("205") // brand magenta
+	colSuccess = lipgloss.Color("78")  // soft green
+	colWarn    = lipgloss.Color("214") // amber
+	colDanger  = lipgloss.Color("203") // soft red
+	colInfo    = lipgloss.Color("117") // soft cyan
+
+	colText   = lipgloss.Color("252")
+	colMuted  = lipgloss.Color("245")
+	colDim    = lipgloss.Color("240")
+	colFaint  = lipgloss.Color("238")
+	colRowBg  = lipgloss.Color("237") // selected row background
+	colBorder = lipgloss.Color("238")
+)
+
+var (
+	titleStyle    = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+	textStyle     = lipgloss.NewStyle().Foreground(colText)
+	mutedStyle    = lipgloss.NewStyle().Foreground(colMuted)
+	dimStyle      = lipgloss.NewStyle().Foreground(colDim)
 	boldStyle     = lipgloss.NewStyle().Bold(true)
-	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	successStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
-	barHighStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	barMedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+	headingStyle  = lipgloss.NewStyle().Foreground(colMuted).Bold(true)
+	selectedStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+
+	workingStyle = lipgloss.NewStyle().Foreground(colWarn).Bold(true)
+	waitingStyle = lipgloss.NewStyle().Foreground(colInfo).Bold(true)
+	idleStyle    = lipgloss.NewStyle().Foreground(colSuccess)
+	noneStyle    = lipgloss.NewStyle().Foreground(colDim)
+
+	errorStyle   = lipgloss.NewStyle().Foreground(colDanger)
+	successStyle = lipgloss.NewStyle().Foreground(colSuccess)
+
+	barHighStyle = lipgloss.NewStyle().Foreground(colDanger)
+	barMedStyle  = lipgloss.NewStyle().Foreground(colWarn)
+	barLowStyle  = lipgloss.NewStyle().Foreground(colSuccess)
+
+	borderStyle = lipgloss.NewStyle().Foreground(colBorder)
 )
 
 type inputMode int
@@ -57,7 +82,7 @@ const (
 	modeSearch
 	modeCreate
 	modeConfirmDelete
-	modeMessage // send message to WAITING agent
+	modeMessage
 )
 
 type sortMode int
@@ -95,15 +120,15 @@ const (
 func (f statusFilter) String() string {
 	switch f {
 	case filterWorking:
-		return "WORKING"
+		return "working"
 	case filterWaiting:
-		return "WAITING"
+		return "waiting"
 	case filterIdle:
-		return "IDLE"
+		return "idle"
 	case filterNone:
-		return "NONE"
+		return "none"
 	default:
-		return "ALL"
+		return "all"
 	}
 }
 
@@ -128,22 +153,20 @@ type statusMsg struct {
 	expires time.Time
 }
 
-// worktreeCreatedMsg is sent when a worktree creation completes
 type worktreeCreatedMsg struct {
 	err      error
-	warnings []string // post-create hook failures
+	warnings []string
 }
 
-// worktreeRemovedMsg is sent when a worktree removal completes
 type worktreeRemovedMsg struct {
 	err error
 }
 
 type model struct {
-	worktrees     []Worktree // all worktrees (unfiltered)
-	filtered      []int      // indices into worktrees matching current filter
+	worktrees     []Worktree
+	filtered      []int
 	cursor        int
-	selected      int // -1 means nothing selected, otherwise index into worktrees
+	selected      int
 	currentBranch string
 	width         int
 	height        int
@@ -151,22 +174,18 @@ type model struct {
 	showHelp      bool
 	tick          time.Time
 
-	// Input modes
 	mode      inputMode
 	textInput textinput.Model
 	statusMsg *statusMsg
 
-	// Sort & filter
 	sortMode     sortMode
 	statusFilter statusFilter
 
-	// Delete confirmation
-	deleteTarget int  // index in filtered list
-	forceDelete  bool // true when triggered by D key
+	deleteTarget int
+	forceDelete  bool
 
-	// Archive
-	archived    map[string]bool // branch names that are archived
-	showArchive bool            // when true, show archived worktrees
+	archived    map[string]bool
+	showArchive bool
 }
 
 func Run(worktrees []Worktree) {
@@ -176,7 +195,6 @@ func Run(worktrees []Worktree) {
 		ti := textinput.New()
 		ti.CharLimit = 60
 
-		// Refresh worktrees on each loop iteration (except first)
 		if refreshed, err := List(); err == nil {
 			worktrees = refreshed
 		}
@@ -207,7 +225,6 @@ func Run(worktrees []Worktree) {
 
 		finalModel, ok := m.(model)
 		if !ok || finalModel.selected < 0 {
-			// User quit without selecting — exit
 			return
 		}
 
@@ -218,8 +235,6 @@ func Run(worktrees []Worktree) {
 		}
 		wt := finalModel.worktrees[finalModel.selected]
 
-		// Build args: use --worktree only for non-default branches
-		// (the default branch lives in the main repo, not a worktree)
 		baseArgs := []string{"--tmux"}
 		defaultBranch := git.DefaultBranch(".")
 		if wt.Branch != defaultBranch {
@@ -234,9 +249,8 @@ func Run(worktrees []Worktree) {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err == nil {
-				continue // Return to TUI
+				continue
 			}
-			// Resume failed (session may no longer exist), start fresh
 		}
 
 		fmt.Fprintf(os.Stderr, "\n  %s\n\n", dimStyle.Render("claude "+strings.Join(baseArgs, " ")))
@@ -245,7 +259,6 @@ func Run(worktrees []Worktree) {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Run()
-		// Return to TUI after launching tmux session
 	}
 }
 
@@ -284,18 +297,15 @@ func (m *model) applyFilter() {
 
 	m.filtered = nil
 	for i, wt := range m.worktrees {
-		// Archive filter
 		if !m.showArchive && m.archived[wt.Branch] {
 			continue
 		}
-		// Text search filter
 		if searchActive {
 			if !strings.Contains(strings.ToLower(wt.Branch), query) &&
 				!strings.Contains(strings.ToLower(wt.RelativePath), query) {
 				continue
 			}
 		}
-		// Status filter
 		if !m.statusFilter.matches(wt.Insights.Status) {
 			continue
 		}
@@ -356,7 +366,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case time.Time:
 		m.refreshInsights()
 		m.applyFilter()
-		// Clear expired status messages
 		if m.statusMsg != nil && time.Now().After(m.statusMsg.expires) {
 			m.statusMsg = nil
 		}
@@ -366,30 +375,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case worktreeCreatedMsg:
 		if msg.err != nil {
-			m.statusMsg = &statusMsg{text: "Create failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
+			m.statusMsg = &statusMsg{text: "create failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
 		} else if len(msg.warnings) > 0 {
-			m.statusMsg = &statusMsg{text: "Created (warnings: " + strings.Join(msg.warnings, ", ") + ")", isError: true, expires: time.Now().Add(5 * time.Second)}
+			m.statusMsg = &statusMsg{text: "created (warnings: " + strings.Join(msg.warnings, ", ") + ")", isError: true, expires: time.Now().Add(5 * time.Second)}
 			m.refreshWorktreeList()
 		} else {
-			m.statusMsg = &statusMsg{text: "Worktree created", expires: time.Now().Add(3 * time.Second)}
+			m.statusMsg = &statusMsg{text: "worktree created", expires: time.Now().Add(3 * time.Second)}
 			m.refreshWorktreeList()
 		}
 		return m, nil
 
 	case worktreeRemovedMsg:
 		if msg.err != nil {
-			m.statusMsg = &statusMsg{text: "Remove failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
+			m.statusMsg = &statusMsg{text: "remove failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
 		} else {
-			m.statusMsg = &statusMsg{text: "Worktree removed", expires: time.Now().Add(3 * time.Second)}
+			m.statusMsg = &statusMsg{text: "worktree removed", expires: time.Now().Add(3 * time.Second)}
 			m.refreshWorktreeList()
 		}
 		return m, nil
 
 	case messageSentMsg:
 		if msg.err != nil {
-			m.statusMsg = &statusMsg{text: "Message failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
+			m.statusMsg = &statusMsg{text: "message failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
 		} else {
-			m.statusMsg = &statusMsg{text: "Message sent", expires: time.Now().Add(3 * time.Second)}
+			m.statusMsg = &statusMsg{text: "message sent", expires: time.Now().Add(3 * time.Second)}
 		}
 		return m, nil
 
@@ -421,7 +430,6 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 
-	// Navigation
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
@@ -437,7 +445,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			m.cursor = len(m.filtered) - 1
 		}
 	case "ctrl+d":
-		half := m.height / 4 // approximate half-page
+		half := m.height / 4
 		if half < 1 {
 			half = 5
 		}
@@ -455,18 +463,16 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 		}
 
-	// Open worktree (was enter, now o)
 	case "o":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
-				m.statusMsg = &statusMsg{text: "Cannot open default branch (--tmux requires --worktree)", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "cannot open default branch (--tmux requires --worktree)", isError: true, expires: time.Now().Add(3 * time.Second)}
 				return m, nil
 			}
 			m.selected = m.filtered[m.cursor]
 			return m, tea.Quit
 		}
 
-	// Enter toggles insights for selected worktree
 	case "enter":
 		m.showInsights = !m.showInsights
 
@@ -491,9 +497,9 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "d":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
-				m.statusMsg = &statusMsg{text: "Cannot delete main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "cannot delete main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
 			} else if HasActiveSession(*wt) {
-				m.statusMsg = &statusMsg{text: "Worktree has active session — use D to force", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "worktree has active session — use D to force", isError: true, expires: time.Now().Add(3 * time.Second)}
 			} else {
 				m.mode = modeConfirmDelete
 				m.deleteTarget = m.cursor
@@ -503,7 +509,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "D":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
-				m.statusMsg = &statusMsg{text: "Cannot delete main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "cannot delete main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
 			} else {
 				m.mode = modeConfirmDelete
 				m.deleteTarget = m.cursor
@@ -511,14 +517,12 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	// Yank (copy path) — vim convention
 	case "y":
 		if wt := m.selectedWorktree(); wt != nil {
-			m.statusMsg = &statusMsg{text: "Path yanked to clipboard", expires: time.Now().Add(3 * time.Second)}
+			m.statusMsg = &statusMsg{text: "path yanked to clipboard", expires: time.Now().Add(3 * time.Second)}
 			return m, tea.SetClipboard(wt.Path)
 		}
 
-	// Sort & filter
 	case "s":
 		m.sortMode = (m.sortMode + 1) % 4
 		m.applyFilter()
@@ -526,7 +530,6 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		m.statusFilter = (m.statusFilter + 1) % 5
 		m.applyFilter()
 
-	// Jump to next WORKING/WAITING worktree
 	case "w":
 		if len(m.filtered) > 0 {
 			for offset := 1; offset <= len(m.filtered); offset++ {
@@ -537,14 +540,13 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
-			m.statusMsg = &statusMsg{text: "No active worktrees", expires: time.Now().Add(2 * time.Second)}
+			m.statusMsg = &statusMsg{text: "no active worktrees", expires: time.Now().Add(2 * time.Second)}
 		}
 
-	// Message a WAITING agent
 	case "m":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.Insights.Status != agent.StatusWait {
-				m.statusMsg = &statusMsg{text: "Agent is not WAITING", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "agent is not WAITING", isError: true, expires: time.Now().Add(3 * time.Second)}
 			} else {
 				m.mode = modeMessage
 				m.textInput.Placeholder = "message to send..."
@@ -553,19 +555,18 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	// Archive/unarchive
 	case "x":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
-				m.statusMsg = &statusMsg{text: "Cannot archive main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "cannot archive main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
 			} else if m.archived[wt.Branch] {
 				delete(m.archived, wt.Branch)
 				saveArchived(m.archived)
-				m.statusMsg = &statusMsg{text: "Unarchived " + wt.Branch, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "unarchived " + wt.Branch, expires: time.Now().Add(3 * time.Second)}
 			} else {
 				m.archived[wt.Branch] = true
 				saveArchived(m.archived)
-				m.statusMsg = &statusMsg{text: "Archived " + wt.Branch, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "archived " + wt.Branch, expires: time.Now().Add(3 * time.Second)}
 				m.applyFilter()
 			}
 		}
@@ -573,9 +574,9 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		m.showArchive = !m.showArchive
 		m.applyFilter()
 		if m.showArchive {
-			m.statusMsg = &statusMsg{text: "Showing archived worktrees", expires: time.Now().Add(2 * time.Second)}
+			m.statusMsg = &statusMsg{text: "showing archived worktrees", expires: time.Now().Add(2 * time.Second)}
 		} else {
-			m.statusMsg = &statusMsg{text: "Hiding archived worktrees", expires: time.Now().Add(2 * time.Second)}
+			m.statusMsg = &statusMsg{text: "hiding archived worktrees", expires: time.Now().Add(2 * time.Second)}
 		}
 	}
 	return m, nil
@@ -594,7 +595,6 @@ func (m model) handleSearchKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 	case "enter":
 		m.mode = modeNormal
 		m.textInput.Blur()
-		// Keep filter active
 		return m, nil
 	case "up", "down":
 		if key == "up" && m.cursor > 0 {
@@ -623,7 +623,7 @@ func (m model) handleCreateKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 		branch := strings.TrimSpace(m.textInput.Value())
 		m.mode = modeNormal
 		m.textInput.Blur()
-		m.statusMsg = &statusMsg{text: "Creating worktree...", expires: time.Now().Add(30 * time.Second)}
+		m.statusMsg = &statusMsg{text: "creating worktree...", expires: time.Now().Add(30 * time.Second)}
 		return m, m.createWorktreeCmd(branch)
 	}
 
@@ -638,7 +638,7 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 		if m.deleteTarget < len(m.filtered) {
 			wt := m.worktrees[m.filtered[m.deleteTarget]]
 			m.mode = modeNormal
-			m.statusMsg = &statusMsg{text: "Removing worktree...", expires: time.Now().Add(30 * time.Second)}
+			m.statusMsg = &statusMsg{text: "removing worktree...", expires: time.Now().Add(30 * time.Second)}
 			return m, m.removeWorktreeCmd(wt.Path, m.forceDelete)
 		}
 		m.mode = modeNormal
@@ -648,7 +648,6 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// messageSentMsg is sent when a message to a WAITING agent completes
 type messageSentMsg struct {
 	err error
 }
@@ -676,7 +675,7 @@ func (m model) handleMessageKey(msg tea.KeyPressMsg, key string) (tea.Model, tea
 		}
 		m.mode = modeNormal
 		m.textInput.Blur()
-		m.statusMsg = &statusMsg{text: "Sending message...", expires: time.Now().Add(10 * time.Second)}
+		m.statusMsg = &statusMsg{text: "sending message...", expires: time.Now().Add(10 * time.Second)}
 		return m, m.sendMessageCmd(wt.Path, text)
 	}
 
@@ -768,207 +767,283 @@ func (m model) View() tea.View {
 	return tea.NewView(m.viewListOnly(totalWidth))
 }
 
-func (m model) renderHeader() string {
-	header := " " + headerStyle.Render("MORI") + dimStyle.Render(" | Current: ") + selectedStyle.Render(m.currentBranch)
-	if m.statusFilter != filterAll {
-		header += dimStyle.Render(" | Filter: ") + footerStyle.Render(m.statusFilter.String())
+// statusCounts returns (working, waiting, idle, none) over unfiltered worktrees.
+func (m model) statusCounts() (w, q, i, n int) {
+	for _, wt := range m.worktrees {
+		switch wt.Insights.Status {
+		case agent.StatusWorking:
+			w++
+		case agent.StatusWait:
+			q++
+		case agent.StatusIdle:
+			i++
+		default:
+			n++
+		}
 	}
-	return header
+	return
+}
+
+func (m model) renderTopBar(width int) string {
+	brand := titleStyle.Render("◆ MORI")
+	branch := mutedStyle.Render("on ") + textStyle.Render(m.currentBranch)
+
+	w, q, i, _ := m.statusCounts()
+	var pills []string
+	if w > 0 {
+		pills = append(pills, workingStyle.Render(fmt.Sprintf("● %d working", w)))
+	}
+	if q > 0 {
+		pills = append(pills, waitingStyle.Render(fmt.Sprintf("◐ %d waiting", q)))
+	}
+	if i > 0 {
+		pills = append(pills, idleStyle.Render(fmt.Sprintf("○ %d idle", i)))
+	}
+	right := strings.Join(pills, mutedStyle.Render("  ·  "))
+
+	left := brand + "  " + branch
+	return padBetween(left, right, width-2)
+}
+
+// padBetween places `left` and `right` on the same line, separated to fill width.
+func padBetween(left, right string, width int) string {
+	lw := lipgloss.Width(left)
+	rw := lipgloss.Width(right)
+	gap := width - lw - rw
+	if gap < 1 {
+		gap = 1
+	}
+	return " " + left + strings.Repeat(" ", gap) + right + " "
+}
+
+// renderFrame draws a rounded-border frame around content with an optional inline title.
+// The title sits on the top border like: ╭─ title ─────────╮
+func renderFrame(content string, width int, title string) string {
+	// width is the OUTER width (including 2 border cols)
+	innerW := width - 2
+	if innerW < 4 {
+		innerW = 4
+	}
+
+	var top string
+	if title != "" {
+		leadDashes := 2
+		titleText := " " + title + " "
+		titleWidth := lipgloss.Width(titleText)
+		tail := innerW - leadDashes - titleWidth
+		if tail < 1 {
+			tail = 1
+		}
+		top = borderStyle.Render("╭"+strings.Repeat("─", leadDashes)) +
+			titleText +
+			borderStyle.Render(strings.Repeat("─", tail)+"╮")
+	} else {
+		top = borderStyle.Render("╭" + strings.Repeat("─", innerW) + "╮")
+	}
+	bottom := borderStyle.Render("╰" + strings.Repeat("─", innerW) + "╯")
+
+	// Pad each line to innerW and wrap with │ │
+	lines := strings.Split(content, "\n")
+	var out strings.Builder
+	out.WriteString(top + "\n")
+	for _, ln := range lines {
+		pad := innerW - lipgloss.Width(ln)
+		if pad < 0 {
+			pad = 0
+		}
+		out.WriteString(borderStyle.Render("│") + ln + strings.Repeat(" ", pad) + borderStyle.Render("│") + "\n")
+	}
+	out.WriteString(bottom)
+	return out.String()
 }
 
 func (m model) viewListOnly(width int) string {
-	var s strings.Builder
+	innerW := width - 2
 
-	s.WriteString("\n")
-	s.WriteString(m.renderHeader() + "\n")
-	s.WriteString("\n")
-	s.WriteString(m.renderWorktreeList(width) + "\n")
-	s.WriteString(m.renderInputLine() + "\n")
-	s.WriteString(m.renderFooter() + "\n")
+	top := m.renderTopBar(width)
+	list := m.renderWorktreeList(innerW)
+	framed := renderFrame(list, width, "worktrees")
 
-	return s.String()
+	footer := m.renderInputLine() + "\n" + m.renderFooter(width-2)
+
+	return "\n" + top + "\n\n" + framed + "\n" + footer + "\n"
 }
 
 func (m model) viewStacked(width int) string {
-	var s strings.Builder
+	innerW := width - 2
 
-	s.WriteString("\n")
-	s.WriteString(m.renderHeader() + "\n")
-	s.WriteString("\n")
-	s.WriteString(m.renderWorktreeList(width) + "\n")
-	s.WriteString("\n")
-	s.WriteString(renderInsightsPanel(m, width-4) + "\n")
-	s.WriteString(m.renderInputLine() + "\n")
-	s.WriteString(m.renderFooter() + "\n")
+	top := m.renderTopBar(width)
+	list := m.renderWorktreeList(innerW)
+	listFrame := renderFrame(list, width, "worktrees")
 
-	return s.String()
+	insights := renderInsightsPanel(m, innerW-2)
+	insightsFrame := renderFrame(insights, width, "agent insights")
+
+	footer := m.renderInputLine() + "\n" + m.renderFooter(width-2)
+
+	return "\n" + top + "\n\n" + listFrame + "\n" + insightsFrame + "\n" + footer + "\n"
 }
 
 func (m model) viewSideBySide(width int) string {
-	var s strings.Builder
-
-	s.WriteString("\n")
-	s.WriteString(m.renderHeader() + "\n")
-	s.WriteString("\n")
-
+	// Each frame is outer width including 2 border cols. A 1-col gutter sits between them.
 	rightW := insightsPaneWidth(width)
-	listWidth := width - rightW - 3
-	leftPane := m.renderWorktreeList(listWidth)
-	rightPane := renderInsightsPanel(m, rightW)
+	leftW := width - rightW - 1
 
-	leftLines := strings.Split(leftPane, "\n")
-	rightLines := strings.Split(rightPane, "\n")
+	leftContent := m.renderWorktreeList(leftW - 2)
+	rightContent := renderInsightsPanel(m, rightW-2)
 
-	maxLines := len(leftLines)
-	if len(rightLines) > maxLines {
-		maxLines = len(rightLines)
+	// Equalize heights so both frames' bottom borders align.
+	leftContent, rightContent = padToSameHeight(leftContent, rightContent)
+
+	leftFrame := renderFrame(leftContent, leftW, "worktrees")
+	rightFrame := renderFrame(rightContent, rightW, "agent insights")
+
+	joined := lipgloss.JoinHorizontal(lipgloss.Top, leftFrame, " ", rightFrame)
+
+	top := m.renderTopBar(width)
+	footer := m.renderInputLine() + "\n" + m.renderFooter(width-2)
+
+	return "\n" + top + "\n\n" + joined + "\n" + footer + "\n"
+}
+
+func padToSameHeight(a, b string) (string, string) {
+	la := strings.Count(a, "\n")
+	lb := strings.Count(b, "\n")
+	if !strings.HasSuffix(a, "\n") {
+		la++
 	}
-
-	for len(rightLines) < maxLines {
-		rightLines = append(rightLines, "")
+	if !strings.HasSuffix(b, "\n") {
+		lb++
 	}
-
-	divider := dimStyle.Render("│")
-	padStyle := lipgloss.NewStyle().Width(listWidth)
-
-	for i := 0; i < maxLines; i++ {
-		var left string
-		if i < len(leftLines) {
-			left = leftLines[i]
-		} else {
-			left = padStyle.Render("")
-		}
-		s.WriteString(left + " " + divider + " " + rightLines[i] + "\n")
+	if la < lb {
+		a += strings.Repeat("\n", lb-la)
+	} else if lb < la {
+		b += strings.Repeat("\n", la-lb)
 	}
-
-	s.WriteString("\n")
-	s.WriteString(m.renderInputLine() + "\n")
-	s.WriteString(m.renderFooter() + "\n")
-
-	return s.String()
+	return a, b
 }
 
 func (m model) viewHelp(width int) string {
-	var s strings.Builder
-
-	s.WriteString("\n")
-	s.WriteString(" " + headerStyle.Render("MORI") + dimStyle.Render(" | Keybindings") + "\n")
-	s.WriteString("\n")
-
-	w := 50
-	if width < w {
+	w := 60
+	if width < w+4 {
 		w = width - 4
 	}
 
-	s.WriteString(dimStyle.Render(strings.Repeat("─", w)) + "\n")
+	var content strings.Builder
 
 	bindings := []struct {
 		section string
 		keys    []struct{ key, desc string }
 	}{
-		{"Navigation", []struct{ key, desc string }{
-			{"j/k, ↑/↓", "Move cursor up/down"},
-			{"g / G", "Jump to first / last"},
-			{"Ctrl+d/u", "Half-page down / up"},
-			{"w", "Jump to next WORKING/WAITING"},
-			{"o", "Open Claude Code in worktree"},
-			{"Enter", "Toggle insights panel"},
-			{"q, Ctrl+C", "Quit"},
+		{"navigation", []struct{ key, desc string }{
+			{"j/k, ↑/↓", "move cursor"},
+			{"g / G", "jump to first / last"},
+			{"ctrl+d/u", "half-page down / up"},
+			{"w", "jump to next working/waiting"},
+			{"o", "open claude code in worktree"},
+			{"enter", "toggle insights panel"},
+			{"q, ctrl+c", "quit"},
 		}},
-		{"Actions", []struct{ key, desc string }{
-			{"n", "Create new worktree"},
-			{"d", "Delete worktree"},
-			{"D", "Force delete (skip active check)"},
-			{"y", "Yank (copy) worktree path"},
-			{"m", "Message a WAITING agent"},
-			{"r", "Refresh insights now"},
-			{"?", "Toggle this help"},
+		{"actions", []struct{ key, desc string }{
+			{"n", "create new worktree"},
+			{"d", "delete worktree"},
+			{"D", "force delete"},
+			{"y", "yank (copy) worktree path"},
+			{"m", "message a waiting agent"},
+			{"r", "refresh insights now"},
+			{"?", "toggle this help"},
 		}},
-		{"Search & Sort", []struct{ key, desc string }{
-			{"/", "Search by branch/path"},
-			{"s", "Cycle sort (default/status/activity/name)"},
-			{"f", "Cycle status filter (all/working/waiting/idle/none)"},
-			{"Esc", "Clear filter / cancel"},
+		{"search & sort", []struct{ key, desc string }{
+			{"/", "search by branch/path"},
+			{"s", "cycle sort"},
+			{"f", "cycle status filter"},
+			{"esc", "clear filter / cancel"},
 		}},
-		{"Archive", []struct{ key, desc string }{
-			{"x", "Archive / unarchive worktree"},
-			{"X", "Toggle show archived"},
+		{"archive", []struct{ key, desc string }{
+			{"x", "archive / unarchive"},
+			{"X", "toggle show archived"},
 		}},
 	}
 
-	for _, section := range bindings {
-		s.WriteString("\n " + boldStyle.Render(section.section) + "\n")
+	for i, section := range bindings {
+		if i > 0 {
+			content.WriteString("\n")
+		}
+		content.WriteString(headingStyle.Render(section.section) + "\n")
 		for _, b := range section.keys {
-			s.WriteString(fmt.Sprintf("  %-14s %s\n", selectedStyle.Render(b.key), dimStyle.Render(b.desc)))
+			keyCell := selectedStyle.Render(b.key)
+			pad := 14 - lipgloss.Width(keyCell)
+			if pad < 1 {
+				pad = 1
+			}
+			content.WriteString("  " + keyCell + strings.Repeat(" ", pad) + mutedStyle.Render(b.desc) + "\n")
 		}
 	}
 
-	s.WriteString("\n" + dimStyle.Render(strings.Repeat("─", w)) + "\n")
-	s.WriteString(footerStyle.Render("[?] Close help  [q] Quit") + "\n")
-
-	return s.String()
+	framed := renderFrame(content.String(), w+2, "keybindings")
+	return "\n" + m.renderTopBar(width) + "\n\n" + framed + "\n" + mutedStyle.Render(" [?] close  [q] quit") + "\n"
 }
 
 func (m model) renderInputLine() string {
 	switch m.mode {
 	case modeSearch:
-		return " " + dimStyle.Render("/") + " " + m.textInput.View()
+		return " " + titleStyle.Render("/") + " " + m.textInput.View()
 	case modeCreate:
-		return " " + headerStyle.Render("New worktree: ") + m.textInput.View()
+		return " " + titleStyle.Render("new worktree ›") + " " + m.textInput.View()
 	case modeMessage:
-		return " " + waitingStyle.Render("Message: ") + m.textInput.View()
+		return " " + waitingStyle.Render("message ›") + " " + m.textInput.View()
 	case modeConfirmDelete:
 		if m.deleteTarget < len(m.filtered) {
 			wt := m.worktrees[m.filtered[m.deleteTarget]]
-			return " " + errorStyle.Render("Delete "+wt.Branch+"? ") + dimStyle.Render("[y/N]")
+			return " " + errorStyle.Render("delete "+wt.Branch+"? ") + mutedStyle.Render("[y/N]")
 		}
 		return ""
 	default:
 		if m.statusMsg != nil && time.Now().Before(m.statusMsg.expires) {
 			if m.statusMsg.isError {
-				return " " + errorStyle.Render(m.statusMsg.text)
+				return " " + errorStyle.Render("✗ "+m.statusMsg.text)
 			}
-			return " " + successStyle.Render(m.statusMsg.text)
+			return " " + successStyle.Render("✓ "+m.statusMsg.text)
 		}
 		return ""
 	}
 }
 
-func (m model) renderFooter() string {
+func (m model) renderFooter(width int) string {
 	if m.mode == modeSearch {
-		return footerStyle.Render("[Enter] Apply  [Esc] Clear  [↑/↓] Navigate")
+		return " " + mutedStyle.Render("[enter] apply  [esc] clear  [↑/↓] navigate")
 	}
 	if m.mode == modeMessage {
-		return footerStyle.Render("[Enter] Send  [Esc] Cancel")
+		return " " + mutedStyle.Render("[enter] send  [esc] cancel")
 	}
 
-	var parts []string
-	insightsHint := "[Enter] Insights"
+	insightsHint := "[enter] insights"
 	if m.showInsights {
-		insightsHint = "[Enter] Hide insights"
+		insightsHint = "[enter] hide"
 	}
-	parts = append(parts, "[?] Help  [o] Open  "+insightsHint+"  [q] Quit")
+	left := mutedStyle.Render("[?] help  [o] open  " + insightsHint + "  [q] quit")
 
-	// Sort & filter indicators
 	var indicators []string
-	indicators = append(indicators, "sort:"+m.sortMode.String())
+	indicators = append(indicators, mutedStyle.Render("sort ")+textStyle.Render(m.sortMode.String()))
 	if m.statusFilter != filterAll {
-		indicators = append(indicators, "filter:"+m.statusFilter.String())
+		indicators = append(indicators, mutedStyle.Render("filter ")+textStyle.Render(m.statusFilter.String()))
 	}
 	if m.showArchive {
-		indicators = append(indicators, "archived:shown")
+		indicators = append(indicators, mutedStyle.Render("archived"))
 	}
-	parts = append(parts, strings.Join(indicators, " "))
+	right := strings.Join(indicators, dimStyle.Render("  ·  "))
 
-	return footerStyle.Render(strings.Join(parts, "  "))
+	return padBetween(left, right, width)
 }
 
-func colWidths(width int) (branchW, activityW, sessionW, contextW int) {
-	activityW, sessionW, contextW = 10, 12, 10
+// --- List rendering ---
+
+func colWidths(width int) (branchW, activityW, statusW, contextW int) {
+	activityW, statusW, contextW = 10, 12, 10
 	if width > 100 {
 		activityW = 12
 	}
-	branchW = width - 4 - activityW - sessionW - contextW
+	branchW = width - 2 /*accent+space*/ - activityW - statusW - contextW - 3 /*gutters*/
 	if branchW < 20 {
 		branchW = 20
 	}
@@ -981,25 +1056,23 @@ func colWidths(width int) (branchW, activityW, sessionW, contextW int) {
 func (m model) renderWorktreeList(width int) string {
 	var s strings.Builder
 
-	branchW, activityW, sessionW, contextW := colWidths(width)
-	tableW := 4 + branchW + activityW + sessionW + contextW
+	branchW, activityW, statusW, contextW := colWidths(width)
 
-	s.WriteString(dimStyle.Render(strings.Repeat("─", tableW)) + "\n")
-	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
-		dimStyle.Width(4).Render(""),
-		boldStyle.Width(branchW).Render("BRANCH"),
-		dimStyle.Width(activityW).Render("ACTIVITY"),
-		boldStyle.Width(sessionW).Render("SESSION"),
-		dimStyle.Width(contextW).Render("CONTEXT"),
-	) + "\n")
-	s.WriteString(dimStyle.Render(strings.Repeat("─", tableW)) + "\n")
+	// Column headers (dim, lowercase)
+	header := "  " + // accent column placeholder (2 cols)
+		mutedStyle.Width(branchW).Render("branch") + " " +
+		mutedStyle.Width(activityW).Render("activity") + " " +
+		mutedStyle.Width(statusW).Render("status") + " " +
+		mutedStyle.Width(contextW).Render("context")
+	s.WriteString(header + "\n")
+	s.WriteString(dimStyle.Render(strings.Repeat("╌", width)) + "\n")
 
 	for i, wtIdx := range m.filtered {
-		s.WriteString(renderWorktreeRow(m, i, wtIdx, branchW, activityW, sessionW, contextW) + "\n")
+		s.WriteString(renderWorktreeRow(m, i, wtIdx, width, branchW, activityW, statusW, contextW) + "\n")
 	}
 
 	if len(m.filtered) == 0 {
-		s.WriteString(dimStyle.Render("  No matching worktrees") + "\n")
+		s.WriteString("\n  " + mutedStyle.Render("no matching worktrees") + "\n")
 	}
 
 	return s.String()
@@ -1025,78 +1098,112 @@ func statusStyle(status agent.StatusType) lipgloss.Style {
 	case agent.StatusWait:
 		return waitingStyle
 	case agent.StatusIdle:
-		return activeStyle
+		return idleStyle
 	default:
 		return noneStyle
 	}
 }
 
-// Row left-border indicators for status
-func rowPrefix(status agent.StatusType) string {
+// statusColor returns the bare color associated with a status, for accent bars.
+func statusColor(status agent.StatusType) color.Color {
 	switch status {
 	case agent.StatusWorking:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("▎")
+		return colWarn
 	case agent.StatusWait:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("▎")
+		return colInfo
+	case agent.StatusIdle:
+		return colSuccess
 	default:
-		return " "
+		return colFaint
 	}
 }
 
-func renderWorktreeRow(m model, cursorIdx, wtIdx int, branchW, activityW, sessionW, contextW int) string {
+func renderWorktreeRow(m model, cursorIdx, wtIdx, rowW, branchW, activityW, statusW, contextW int) string {
 	wt := m.worktrees[wtIdx]
+	selected := m.cursor == cursorIdx
 
 	trunc := func(s string, w int) string {
-		if len(s) > w-3 {
-			return s[:w-3] + "..."
+		if lipgloss.Width(s) > w {
+			if w <= 1 {
+				return s[:w]
+			}
+			return s[:w-1] + "…"
 		}
 		return s
 	}
 
-	checkbox := "[ ] "
-
+	// Branch label with prefix markers.
 	branchLabel := wt.Branch
 	if wt.IsMain {
-		branchLabel = "⊙ " + branchLabel
+		branchLabel = "★ " + branchLabel
 	}
 	if m.archived[wt.Branch] {
 		branchLabel = "⌀ " + branchLabel
 	}
-	branchVal := trunc(branchLabel, branchW)
+	branchLabel = trunc(branchLabel, branchW)
 
-	activityVal := "—"
+	activity := "—"
 	if !wt.Insights.LastActivity.IsZero() {
-		activityVal = relativeTime(wt.Insights.LastActivity)
+		activity = relativeTime(wt.Insights.LastActivity)
 	}
 
-	icon := statusIcon(wt.Insights.Status)
-	sessionVal := icon + " " + string(wt.Insights.Status)
-	stStyle := statusStyle(wt.Insights.Status)
+	statusText := statusIcon(wt.Insights.Status) + " " + strings.ToLower(string(wt.Insights.Status))
+	contextText := renderInlineContextRaw(wt.Insights)
 
-	// Inline context usage
-	contextVal := renderInlineContext(wt.Insights)
+	// Each span below sets both fg AND bg (when selected) so terminal resets
+	// between spans don't leave un-highlighted gaps.
+	bg := func(st lipgloss.Style) lipgloss.Style {
+		if selected {
+			return st.Background(colRowBg)
+		}
+		return st
+	}
+	sep := bg(lipgloss.NewStyle()).Render(" ")
 
-	if m.cursor == cursorIdx {
-		checkbox = selectedStyle.Render("[*] ")
-		branchVal = selectedStyle.Width(branchW).Render(branchVal)
-		activityVal = dimStyle.Width(activityW).Render(activityVal)
-		sessionVal = stStyle.Width(sessionW).Render(sessionVal)
-		contextVal = lipgloss.NewStyle().Width(contextW).Render(contextVal)
+	// Accent bar — accent color on selected row; status color on active rows.
+	var accentBar string
+	switch {
+	case selected:
+		accentBar = bg(lipgloss.NewStyle().Foreground(colAccent)).Render("▌")
+	case wt.Insights.Status == agent.StatusWorking || wt.Insights.Status == agent.StatusWait:
+		accentBar = lipgloss.NewStyle().Foreground(statusColor(wt.Insights.Status)).Render("▏")
+	default:
+		accentBar = " "
+	}
+
+	var branchStyle, activityStyle, statusCellStyle, contextCellStyle lipgloss.Style
+	if selected {
+		branchStyle = lipgloss.NewStyle().Foreground(colText).Bold(true).Width(branchW)
+		activityStyle = lipgloss.NewStyle().Foreground(colMuted).Width(activityW)
+		statusCellStyle = statusStyle(wt.Insights.Status).Width(statusW)
+		contextCellStyle = contextFgStyle(wt.Insights).Width(contextW)
 	} else {
-		checkbox = dimStyle.Render(checkbox)
-		branchVal = dimStyle.Width(branchW).Render(branchVal)
-		activityVal = dimStyle.Width(activityW).Render(activityVal)
-		sessionVal = stStyle.Width(sessionW).Render(sessionVal)
-		contextVal = lipgloss.NewStyle().Width(contextW).Render(contextVal)
+		branchStyle = lipgloss.NewStyle().Foreground(colText).Width(branchW)
+		activityStyle = lipgloss.NewStyle().Foreground(colDim).Width(activityW)
+		statusCellStyle = statusStyle(wt.Insights.Status).Width(statusW)
+		contextCellStyle = contextFgStyle(wt.Insights).Width(contextW)
 	}
 
-	prefix := rowPrefix(wt.Insights.Status)
-	row := lipgloss.JoinHorizontal(lipgloss.Top, prefix, checkbox, branchVal, activityVal, sessionVal, contextVal)
+	branchCell := bg(branchStyle).Render(branchLabel)
+	activityCell := bg(activityStyle).Render(activity)
+	statusCell := bg(statusCellStyle).Render(statusText)
+	contextCell := bg(contextCellStyle).Render(contextText)
 
+	row := accentBar + sep + branchCell + sep + activityCell + sep + statusCell + sep + contextCell
+
+	// Pad any trailing width so the highlight fills to the right edge.
+	if selected {
+		cur := lipgloss.Width(row)
+		if cur < rowW {
+			row += bg(lipgloss.NewStyle()).Render(strings.Repeat(" ", rowW-cur))
+		}
+	}
 	return row
 }
 
-func renderInlineContext(ins agent.Insights) string {
+// renderInlineContextRaw returns the context percent text without styling;
+// caller applies the style (so bg can be attached uniformly).
+func renderInlineContextRaw(ins agent.Insights) string {
 	if ins.InputTokens <= 0 {
 		return "—"
 	}
@@ -1105,132 +1212,218 @@ func renderInlineContext(ins agent.Insights) string {
 	if percent > 1 {
 		percent = 1
 	}
-	pct := int(percent * 100)
+	return fmt.Sprintf("%d%%", int(percent*100))
+}
 
-	var style lipgloss.Style
+func contextFgStyle(ins agent.Insights) lipgloss.Style {
+	if ins.InputTokens <= 0 {
+		return mutedStyle
+	}
+	maxTokens := contextMaxTokens(ins.Model)
+	percent := float64(ins.InputTokens) / float64(maxTokens)
 	switch {
 	case percent >= 0.8:
-		style = barHighStyle
+		return barHighStyle
 	case percent >= 0.5:
-		style = barMedStyle
+		return barMedStyle
 	default:
-		style = activeStyle
+		return barLowStyle
 	}
-	return style.Render(fmt.Sprintf("%d%%", pct))
 }
+
+// padCell right-pads a styled string to the given visual width.
+func padCell(s string, w int) string {
+	cur := lipgloss.Width(s)
+	if cur >= w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-cur)
+}
+
+// --- Insights panel (card layout) ---
 
 func renderInsightsPanel(m model, width int) string {
 	var s strings.Builder
 
-	s.WriteString(boldStyle.Render(" AGENT INSIGHTS") + "\n")
-	s.WriteString(dimStyle.Render(strings.Repeat("─", width)) + "\n")
-
 	wt := m.selectedWorktree()
 	if wt == nil {
-		s.WriteString(dimStyle.Render("No worktree selected"))
-		return s.String()
+		return "\n  " + mutedStyle.Render("no worktree selected") + "\n"
 	}
 
-	statusStr := string(wt.Insights.Status)
-	stStyle := statusStyle(wt.Insights.Status)
-
-	// Status + last tool + error badge + last activity
-	icon := statusIcon(wt.Insights.Status)
-	statusLine := icon + " [" + statusStr + "]"
-	if wt.Insights.HasError {
-		statusLine += " " + errorStyle.Render("ERROR")
+	// Header card: status pill + model/cost on the right.
+	pill := renderStatusPill(wt.Insights.Status)
+	var rightParts []string
+	if wt.Insights.Model != "" {
+		rightParts = append(rightParts, textStyle.Render(agent.ModelTier(wt.Insights.Model)))
 	}
-	if wt.Insights.LastTool != "" && wt.Insights.Status == agent.StatusWorking {
-		statusLine += " " + dimStyle.Render(wt.Insights.LastTool)
+	if wt.Insights.Mode != "" && wt.Insights.Mode != "default" {
+		rightParts = append(rightParts, mutedStyle.Render(wt.Insights.Mode))
 	}
-	if wt.Insights.Status == agent.StatusIdle && !wt.Insights.LastActivity.IsZero() {
-		ago := relativeTime(wt.Insights.LastActivity)
-		statusLine += " " + dimStyle.Render(ago)
-	}
-	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("STATUS:"), stStyle.Render(statusLine)))
-
-	// Session slug
-	session := wt.Insights.Slug
-	if session == "" {
-		session = wt.Insights.SessionID
-		if len(session) > 8 {
-			session = session[:8]
-		}
-	}
-	if session == "" {
-		session = "—"
-	}
-	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("SESSION:"), dimStyle.Render(session)))
-
-	// Model + Mode (hide default mode)
-	mdl := wt.Insights.Model
-	if mdl != "" {
-		mdl = agent.ModelTier(mdl)
-	}
-	mode := wt.Insights.Mode
-	modelMode := "—"
-	if mdl != "" && mode != "" {
-		modelMode = mdl + " / " + mode
-	} else if mdl != "" {
-		modelMode = mdl
-	} else if mode != "" {
-		modelMode = mode
-	}
-	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("MODEL:"), dimStyle.Render(modelMode)))
-
-	// Cost
-	costStr := "—"
 	if wt.Insights.CostUSD > 0 {
-		costStr = fmt.Sprintf("$%.2f", wt.Insights.CostUSD)
+		rightParts = append(rightParts, successStyle.Render(fmt.Sprintf("$%.2f", wt.Insights.CostUSD)))
 	}
-	s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("COST:"), dimStyle.Render(costStr)))
+	right := strings.Join(rightParts, mutedStyle.Render(" · "))
 
-	// Context bar — use input tokens if available, fall back to file size
-	if wt.Insights.InputTokens > 0 {
-		maxTokens := contextMaxTokens(wt.Insights.Model)
-		percent := float64(wt.Insights.InputTokens) / float64(maxTokens)
-		tokenK := wt.Insights.InputTokens / 1000
-		label := fmt.Sprintf("%d%% (%dk/%dk)", int(percent*100), tokenK, maxTokens/1000)
-		s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("CONTEXT:"), renderContextBar(percent, label)))
-	} else {
-		const maxSize int64 = 10 * 1024 * 1024
-		percent := float64(wt.Insights.SessionSize) / float64(maxSize)
-		label := fmt.Sprintf("%d%%", int(percent*100))
-		s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("CONTEXT:"), renderContextBar(percent, label)))
+	s.WriteString("\n")
+	s.WriteString(padBetween(pill, right, width) + "\n")
+
+	// Status detail line — last tool or error badge or relative time.
+	var detail string
+	if wt.Insights.HasError {
+		detail = errorStyle.Render("⚠ last tool errored")
+	} else if wt.Insights.LastTool != "" && wt.Insights.Status == agent.StatusWorking {
+		detail = mutedStyle.Render("running ") + textStyle.Render(wt.Insights.LastTool)
+	} else if wt.Insights.Status == agent.StatusIdle && !wt.Insights.LastActivity.IsZero() {
+		detail = mutedStyle.Render("last active " + relativeTime(wt.Insights.LastActivity))
+	}
+	if detail != "" {
+		s.WriteString(" " + detail + "\n")
 	}
 
-	// Branch ahead/behind
+	// Context bar (full panel width).
+	s.WriteString("\n")
+	s.WriteString(renderContextRow(wt.Insights, width-2) + "\n")
+
+	// Key/value section.
+	s.WriteString("\n")
+	s.WriteString(kvRow(" session", insightsSessionLabel(wt.Insights), width) + "\n")
 	if wt.Insights.AheadBehind != "" {
-		s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("BRANCH:"), dimStyle.Render(wt.Insights.AheadBehind)))
+		s.WriteString(kvRow(" branch", textStyle.Render(wt.Insights.AheadBehind), width) + "\n")
 	}
-
-	// Turn stats — only show when working
 	if wt.Insights.Status == agent.StatusWorking && (wt.Insights.TurnDurationS > 0 || wt.Insights.MessageCount > 0) {
-		turnStr := fmt.Sprintf("%ds / %d msgs", wt.Insights.TurnDurationS, wt.Insights.MessageCount)
-		s.WriteString(fmt.Sprintf("%-12s %s\n", dimStyle.Render("TURN:"), dimStyle.Render(turnStr)))
+		turn := fmt.Sprintf("%ds · %d msgs", wt.Insights.TurnDurationS, wt.Insights.MessageCount)
+		s.WriteString(kvRow(" turn", textStyle.Render(turn), width) + "\n")
 	}
 
-	// Task
+	// Task section.
 	task := wt.Insights.CurrentTask
 	if task == "" {
 		task = "—"
 	}
-	s.WriteString("TASK:\n")
-	for _, line := range wrapText(task, width-2) {
-		s.WriteString("  " + dimStyle.Render(line) + "\n")
+	s.WriteString("\n")
+	s.WriteString(" " + headingStyle.Render("task") + "\n")
+	for _, line := range wrapText(task, width-3) {
+		s.WriteString("   " + textStyle.Render(line) + "\n")
 	}
 
+	// Git log section.
 	if len(wt.Insights.GitLog) > 0 {
-		s.WriteString("\n" + boldStyle.Render("GIT LOG") + "\n")
+		s.WriteString("\n")
+		s.WriteString(" " + headingStyle.Render("recent commits") + "\n")
 		for _, entry := range wt.Insights.GitLog {
-			if len(entry) > width-4 {
-				entry = entry[:width-7] + "..."
+			line := entry
+			if lipgloss.Width(line) > width-5 {
+				line = line[:width-6] + "…"
 			}
-			s.WriteString("  " + dimStyle.Render("• "+entry) + "\n")
+			s.WriteString("   " + mutedStyle.Render("•") + " " + textStyle.Render(line) + "\n")
 		}
 	}
 
 	return s.String()
+}
+
+func insightsSessionLabel(ins agent.Insights) string {
+	if ins.Slug != "" {
+		return textStyle.Render(ins.Slug)
+	}
+	if ins.SessionID != "" {
+		s := ins.SessionID
+		if len(s) > 8 {
+			s = s[:8]
+		}
+		return mutedStyle.Render(s)
+	}
+	return mutedStyle.Render("—")
+}
+
+// renderStatusPill returns a bold, colored badge with a leading glyph.
+func renderStatusPill(status agent.StatusType) string {
+	glyph := statusIcon(status)
+	text := strings.ToLower(string(status))
+	style := statusStyle(status).Padding(0, 1)
+	return style.Render(glyph + " " + text)
+}
+
+// kvRow formats a two-column label/value row, right-aligned value.
+func kvRow(label, value string, width int) string {
+	labelCell := mutedStyle.Render(label)
+	lw := lipgloss.Width(labelCell)
+	vw := lipgloss.Width(value)
+	gap := width - lw - vw - 1
+	if gap < 1 {
+		gap = 1
+	}
+	return labelCell + strings.Repeat(" ", gap) + value + " "
+}
+
+// renderContextRow renders a smooth (8ths-precision) progress bar with label.
+func renderContextRow(ins agent.Insights, width int) string {
+	var percent float64
+	var label string
+	if ins.InputTokens > 0 {
+		maxTokens := contextMaxTokens(ins.Model)
+		percent = float64(ins.InputTokens) / float64(maxTokens)
+		tokenK := ins.InputTokens / 1000
+		label = fmt.Sprintf("%d%% · %dk/%dk", int(percent*100), tokenK, maxTokens/1000)
+	} else {
+		const maxSize int64 = 10 * 1024 * 1024
+		if maxSize > 0 {
+			percent = float64(ins.SessionSize) / float64(maxSize)
+		}
+		label = fmt.Sprintf("%d%%", int(percent*100))
+	}
+
+	labelW := lipgloss.Width(label)
+	barW := width - labelW - 3 // " " + bar + " " + label
+	if barW < 8 {
+		barW = 8
+	}
+	bar := renderSmoothBar(percent, barW)
+	return " " + bar + " " + mutedStyle.Render(label)
+}
+
+// renderSmoothBar renders a horizontal progress bar with 8x sub-cell precision
+// using the Unicode block-element partial-fill characters.
+func renderSmoothBar(percent float64, width int) string {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 1 {
+		percent = 1
+	}
+
+	partials := []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
+	totalEighths := int(percent * float64(width) * 8)
+	fullCells := totalEighths / 8
+	remainder := totalEighths % 8
+	if fullCells > width {
+		fullCells = width
+		remainder = 0
+	}
+
+	var fg color.Color
+	switch {
+	case percent >= 0.8:
+		fg = colDanger
+	case percent >= 0.5:
+		fg = colWarn
+	default:
+		fg = colSuccess
+	}
+	filledStyle := lipgloss.NewStyle().Foreground(fg)
+	trackStyle := lipgloss.NewStyle().Foreground(colFaint)
+
+	var b strings.Builder
+	b.WriteString(filledStyle.Render(strings.Repeat("█", fullCells)))
+	remain := width - fullCells
+	if remainder > 0 && remain > 0 {
+		b.WriteString(filledStyle.Render(partials[remainder]))
+		remain--
+	}
+	if remain > 0 {
+		b.WriteString(trackStyle.Render(strings.Repeat("─", remain)))
+	}
+	return b.String()
 }
 
 func relativeTime(t time.Time) string {
@@ -1296,31 +1489,3 @@ func contextMaxTokens(model string) int {
 		return 200_000
 	}
 }
-
-func renderContextBar(percent float64, label string) string {
-	if percent > 1 {
-		percent = 1
-	}
-	if percent < 0 {
-		percent = 0
-	}
-
-	bars := 10
-	filled := int(percent * float64(bars))
-	empty := bars - filled
-
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", empty)
-
-	var barStyle lipgloss.Style
-	switch {
-	case percent >= 0.8:
-		barStyle = barHighStyle
-	case percent >= 0.5:
-		barStyle = barMedStyle
-	default:
-		barStyle = activeStyle
-	}
-
-	return dimStyle.Render("[") + barStyle.Render(bar) + dimStyle.Render("] ") + dimStyle.Render(label)
-}
-
