@@ -787,19 +787,19 @@ func (m model) View() tea.View {
 		totalWidth = 140
 	}
 
-	if m.showHelp {
-		return tea.NewView(m.viewHelp(totalWidth))
+	var v tea.View
+	switch {
+	case m.showHelp:
+		v = tea.NewView(m.viewHelp(totalWidth))
+	case m.showInsights && totalWidth >= sideByMinWidth:
+		v = tea.NewView(m.viewSideBySide(totalWidth))
+	case m.showInsights && totalWidth >= listOnlyMinWidth:
+		v = tea.NewView(m.viewStacked(totalWidth))
+	default:
+		v = tea.NewView(m.viewListOnly(totalWidth))
 	}
-
-	if m.showInsights {
-		if totalWidth >= sideByMinWidth {
-			return tea.NewView(m.viewSideBySide(totalWidth))
-		}
-		if totalWidth >= listOnlyMinWidth {
-			return tea.NewView(m.viewStacked(totalWidth))
-		}
-	}
-	return tea.NewView(m.viewListOnly(totalWidth))
+	v.AltScreen = true
+	return v
 }
 
 // statusCounts returns (working, waiting, idle, none) over unfiltered worktrees.
