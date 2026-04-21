@@ -1,9 +1,10 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
+
+	"github.com/spf13/cobra"
 
 	"github.com/trebaud/mori/cmd/mori/commands"
 )
@@ -11,116 +12,133 @@ import (
 const version = "1.1.0"
 
 func main() {
-	if len(os.Args) < 2 {
-		commands.Select()
-		return
-	}
-
-	switch os.Args[1] {
-	case "new":
-		runNew(os.Args[2:])
-	case "list", "ls":
-		runList(os.Args[2:])
-	case "remove", "rm":
-		runRemove(os.Args[2:])
-	case "open":
-		runOpen(os.Args[2:])
-	case "status":
-		runStatus()
-	case "version", "--version", "-v":
-		fmt.Printf("mori v%s\n", version)
-	case "help", "--help", "-h":
-		printHelp()
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\nRun 'mori help' for usage.\n", os.Args[1])
+	if err := rootCmd().Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func runNew(args []string) {
-	fs := flag.NewFlagSet("new", flag.ExitOnError)
+func rootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "mori",
+		Short:         "Git worktree manager with Claude Code insights",
+		Version:       version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		Run: func(*cobra.Command, []string) {
+			commands.Select()
+		},
+	}
+	root.SetVersionTemplate("mori v{{.Version}}\n")
+	root.Flags().BoolP("version", "v", false, "Show version")
+	root.SetHelpTemplate(helpTemplate)
+	root.SetUsageTemplate(helpTemplate)
+
+	root.AddCommand(newCmd(), listCmd(), removeCmd(), openCmd(), statusCmd(), versionCmd())
+	return root
+}
+
+func newCmd() *cobra.Command {
 	var (
 		launchClaude bool
 		repoDir      string
 	)
-	fs.BoolVar(&launchClaude, "c", false, "Launch Claude Code after creating")
-	fs.BoolVar(&launchClaude, "claude", false, "Launch Claude Code after creating")
-	fs.StringVar(&repoDir, "r", "", "Repository root")
-	fs.StringVar(&repoDir, "repo", "", "Repository root")
-	fs.Parse(args)
-
-	branch := fs.Arg(0)
-
-	if err := commands.Create(commands.CreateOptions{
-		Repo:         repoDir,
-		Branch:       branch,
-		LaunchClaude: launchClaude,
-	}); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	cmd := &cobra.Command{
+		Use:   "new [branch]",
+		Short: "Create a new worktree",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			var branch string
+			if len(args) > 0 {
+				branch = args[0]
+			}
+			return commands.Create(commands.CreateOptions{
+				Repo:         repoDir,
+				Branch:       branch,
+				LaunchClaude: launchClaude,
+			})
+		},
 	}
+	cmd.Flags().BoolVarP(&launchClaude, "claude", "c", false, "Launch Claude Code after creating")
+	cmd.Flags().StringVarP(&repoDir, "repo", "r", "", "Repository root (default: current directory)")
+	return cmd
 }
 
-func runList(args []string) {
-	fs := flag.NewFlagSet("list", flag.ExitOnError)
+func listCmd() *cobra.Command {
 	var (
 		jsonOutput   bool
 		statusFilter string
 	)
-	fs.BoolVar(&jsonOutput, "json", false, "Output as JSON")
-	fs.StringVar(&statusFilter, "status", "", "Filter by status (working, idle, waiting, none)")
-	fs.Parse(args)
-
-	if err := commands.PrintList(jsonOutput, statusFilter); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	cmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List worktrees",
+		Args:    cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return commands.PrintList(jsonOutput, statusFilter)
+		},
 	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON (includes insights data)")
+	cmd.Flags().StringVar(&statusFilter, "status", "", "Filter by status (working, idle, waiting, none)")
+	return cmd
 }
 
-func runRemove(args []string) {
-	fs := flag.NewFlagSet("remove", flag.ExitOnError)
+func removeCmd() *cobra.Command {
 	var force bool
-	fs.BoolVar(&force, "f", false, "Skip confirmation prompts")
-	fs.BoolVar(&force, "force", false, "Skip confirmation prompts")
-	fs.Parse(args)
-
-	branch := fs.Arg(0)
-	if branch == "" {
-		fmt.Fprintf(os.Stderr, "Usage: mori remove <branch> [--force]\n")
-		os.Exit(1)
+	cmd := &cobra.Command{
+		Use:     "remove <branch>",
+		Aliases: []string{"rm"},
+		Short:   "Remove a worktree",
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("Usage: mori remove <branch> [--force]")
+			}
+			return commands.Remove(args[0], force)
+		},
 	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Skip confirmation prompts")
+	return cmd
+}
 
-	if err := commands.Remove(branch, force); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+func openCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "open <branch>",
+		Short: "Print worktree path for branch",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("Usage: mori open <branch>")
+			}
+			return commands.Open(args[0])
+		},
 	}
 }
 
-func runOpen(args []string) {
-	fs := flag.NewFlagSet("open", flag.ExitOnError)
-	fs.Parse(args)
-
-	branch := fs.Arg(0)
-	if branch == "" {
-		fmt.Fprintf(os.Stderr, "Usage: mori open <branch>\n")
-		os.Exit(1)
-	}
-
-	if err := commands.Open(branch); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+func statusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show worktree summary",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return commands.Status()
+		},
 	}
 }
 
-func runStatus() {
-	if err := commands.Status(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Show version",
+		Args:  cobra.NoArgs,
+		Run: func(*cobra.Command, []string) {
+			fmt.Printf("mori v%s\n", version)
+		},
 	}
 }
 
-func printHelp() {
-	fmt.Printf(`Mori v%s - Git worktree manager with Claude Code insights
+const helpTemplate = `Mori v` + version + ` - Git worktree manager with Claude Code insights
 
 Usage:
   mori                          Launch interactive TUI
@@ -142,7 +160,7 @@ Flags (remove):
   -f, --force       Skip confirmation prompts
 
 Global:
-  help, --help      Show this help message
+  help, --help        Show this help message
   version, --version  Show version
 
 TUI keys:
@@ -151,5 +169,4 @@ TUI keys:
   n              New worktree     d       Delete worktree
   /              Filter           s       Cycle sort mode
   r              Refresh          ?       Show all keybindings
-`, version)
-}
+`
