@@ -149,10 +149,19 @@ func (f statusFilter) matches(status agent.StatusType) bool {
 }
 
 type statusMsg struct {
-	text    string
-	isError bool
-	expires time.Time
+	text      string
+	isError   bool
+	isLoading bool
+	expires   time.Time
 }
+
+// Durations for the three status-message buckets. Keeping this small and
+// named keeps timings cohesive across the UI instead of ad-hoc per call site.
+const (
+	statusInfoDuration  = 2500 * time.Millisecond
+	statusErrorDuration = 4 * time.Second
+	statusLoadingMax    = 30 * time.Second
+)
 
 type worktreeCreatedMsg struct {
 	err      error
@@ -376,34 +385,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case worktreeCreatedMsg:
 		if msg.err != nil {
-			m.statusMsg = &statusMsg{text: "create failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
+			m.statusMsg = &statusMsg{text: "create failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(statusErrorDuration)}
 		} else if len(msg.warnings) > 0 {
-			m.statusMsg = &statusMsg{text: "created (warnings: " + strings.Join(msg.warnings, ", ") + ")", isError: true, expires: time.Now().Add(5 * time.Second)}
+			m.statusMsg = &statusMsg{text: "created (warnings: " + strings.Join(msg.warnings, ", ") + ")", isError: true, expires: time.Now().Add(statusErrorDuration)}
 			m.refreshWorktreeList()
 		} else {
-			m.statusMsg = &statusMsg{text: "worktree created", expires: time.Now().Add(3 * time.Second)}
+			m.statusMsg = &statusMsg{text: "worktree created", expires: time.Now().Add(statusInfoDuration)}
 			m.refreshWorktreeList()
 		}
 		return m, nil
 
 	case worktreeRemovedMsg:
 		if msg.err != nil {
-			m.statusMsg = &statusMsg{text: "remove failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
+			m.statusMsg = &statusMsg{text: "remove failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(statusErrorDuration)}
 		} else {
-			m.statusMsg = &statusMsg{text: "worktree removed", expires: time.Now().Add(3 * time.Second)}
+			m.statusMsg = &statusMsg{text: "worktree removed", expires: time.Now().Add(statusInfoDuration)}
 			m.refreshWorktreeList()
 		}
 		return m, nil
 
 	case messageSentMsg:
 		if msg.err != nil {
-			m.statusMsg = &statusMsg{text: "launch failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
+			m.statusMsg = &statusMsg{text: "launch failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(statusErrorDuration)}
 		} else {
 			text := "agent launched"
 			if msg.logPath != "" {
 				text = "agent launched — log: " + msg.logPath
 			}
-			m.statusMsg = &statusMsg{text: text, expires: time.Now().Add(8 * time.Second)}
+			m.statusMsg = &statusMsg{text: text, expires: time.Now().Add(statusInfoDuration)}
 		}
 		return m, nil
 
@@ -471,7 +480,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "o":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
-				m.statusMsg = &statusMsg{text: "cannot open default branch (--tmux requires --worktree)", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "cannot open default branch (--tmux requires --worktree)", isError: true, expires: time.Now().Add(statusErrorDuration)}
 				return m, nil
 			}
 			m.selected = m.filtered[m.cursor]
@@ -491,7 +500,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		m.showHelp = !m.showHelp
 	case "/":
 		m.mode = modeSearch
-		m.textInput.Placeholder = "filter by branch or path..."
+		m.textInput.Placeholder = "filter by branch or path…"
 		m.textInput.SetValue("")
 		return m, m.textInput.Focus()
 	case "n":
@@ -502,9 +511,9 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "d":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
-				m.statusMsg = &statusMsg{text: "cannot delete main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "cannot delete main worktree", isError: true, expires: time.Now().Add(statusErrorDuration)}
 			} else if HasActiveSession(*wt) {
-				m.statusMsg = &statusMsg{text: "worktree has active session — use D to force", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "worktree has active session — use D to force", isError: true, expires: time.Now().Add(statusErrorDuration)}
 			} else {
 				m.mode = modeConfirmDelete
 				m.deleteTarget = m.cursor
@@ -514,7 +523,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "D":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
-				m.statusMsg = &statusMsg{text: "cannot delete main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "cannot delete main worktree", isError: true, expires: time.Now().Add(statusErrorDuration)}
 			} else {
 				m.mode = modeConfirmDelete
 				m.deleteTarget = m.cursor
@@ -524,7 +533,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 
 	case "y":
 		if wt := m.selectedWorktree(); wt != nil {
-			m.statusMsg = &statusMsg{text: "path yanked to clipboard", expires: time.Now().Add(3 * time.Second)}
+			m.statusMsg = &statusMsg{text: "path yanked to clipboard", expires: time.Now().Add(statusInfoDuration)}
 			return m, tea.SetClipboard(wt.Path)
 		}
 
@@ -545,13 +554,13 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
-			m.statusMsg = &statusMsg{text: "no active worktrees", expires: time.Now().Add(2 * time.Second)}
+			m.statusMsg = &statusMsg{text: "no active worktrees", expires: time.Now().Add(statusInfoDuration)}
 		}
 
 	case "m":
 		if m.selectedWorktree() != nil {
 			m.mode = modeMessage
-			m.textInput.Placeholder = "prompt for new claude agent..."
+			m.textInput.Placeholder = "prompt for new claude agent…"
 			m.textInput.CharLimit = 500
 			m.textInput.SetValue("")
 			return m, m.textInput.Focus()
@@ -560,15 +569,15 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "x":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
-				m.statusMsg = &statusMsg{text: "cannot archive main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "cannot archive main worktree", isError: true, expires: time.Now().Add(statusErrorDuration)}
 			} else if m.archived[wt.Branch] {
 				delete(m.archived, wt.Branch)
 				saveArchived(m.archived)
-				m.statusMsg = &statusMsg{text: "unarchived " + wt.Branch, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "unarchived " + wt.Branch, expires: time.Now().Add(statusInfoDuration)}
 			} else {
 				m.archived[wt.Branch] = true
 				saveArchived(m.archived)
-				m.statusMsg = &statusMsg{text: "archived " + wt.Branch, expires: time.Now().Add(3 * time.Second)}
+				m.statusMsg = &statusMsg{text: "archived " + wt.Branch, expires: time.Now().Add(statusInfoDuration)}
 				m.applyFilter()
 			}
 		}
@@ -576,9 +585,9 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		m.showArchive = !m.showArchive
 		m.applyFilter()
 		if m.showArchive {
-			m.statusMsg = &statusMsg{text: "showing archived worktrees", expires: time.Now().Add(2 * time.Second)}
+			m.statusMsg = &statusMsg{text: "showing archived worktrees", expires: time.Now().Add(statusInfoDuration)}
 		} else {
-			m.statusMsg = &statusMsg{text: "hiding archived worktrees", expires: time.Now().Add(2 * time.Second)}
+			m.statusMsg = &statusMsg{text: "hiding archived worktrees", expires: time.Now().Add(statusInfoDuration)}
 		}
 	}
 	return m, nil
@@ -625,7 +634,7 @@ func (m model) handleCreateKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 		branch := strings.TrimSpace(m.textInput.Value())
 		m.mode = modeNormal
 		m.textInput.Blur()
-		m.statusMsg = &statusMsg{text: "creating worktree...", expires: time.Now().Add(30 * time.Second)}
+		m.statusMsg = &statusMsg{text: "creating worktree…", isLoading: true, expires: time.Now().Add(statusLoadingMax)}
 		return m, m.createWorktreeCmd(branch)
 	}
 
@@ -640,7 +649,7 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 		if m.deleteTarget < len(m.filtered) {
 			wt := m.worktrees[m.filtered[m.deleteTarget]]
 			m.mode = modeNormal
-			m.statusMsg = &statusMsg{text: "removing worktree...", expires: time.Now().Add(30 * time.Second)}
+			m.statusMsg = &statusMsg{text: "removing worktree…", isLoading: true, expires: time.Now().Add(statusLoadingMax)}
 			return m, m.removeWorktreeCmd(wt.Path, m.forceDelete)
 		}
 		m.mode = modeNormal
@@ -682,7 +691,7 @@ func (m model) handleMessageKey(msg tea.KeyPressMsg, key string) (tea.Model, tea
 		m.mode = modeNormal
 		m.textInput.Blur()
 		m.textInput.CharLimit = 60
-		m.statusMsg = &statusMsg{text: "launching agent...", expires: time.Now().Add(10 * time.Second)}
+		m.statusMsg = &statusMsg{text: "launching agent…", isLoading: true, expires: time.Now().Add(statusLoadingMax)}
 		return m, m.launchAgentCmd(*wt, text)
 	}
 
@@ -1035,10 +1044,14 @@ func (m model) renderInputLine() string {
 		return ""
 	default:
 		if m.statusMsg != nil && time.Now().Before(m.statusMsg.expires) {
-			if m.statusMsg.isError {
+			switch {
+			case m.statusMsg.isLoading:
+				return " " + mutedStyle.Render("⋯ "+m.statusMsg.text)
+			case m.statusMsg.isError:
 				return " " + errorStyle.Render("✗ "+m.statusMsg.text)
+			default:
+				return " " + successStyle.Render("✓ "+m.statusMsg.text)
 			}
-			return " " + successStyle.Render("✓ "+m.statusMsg.text)
 		}
 		return ""
 	}
@@ -1100,7 +1113,7 @@ func (m model) renderWorktreeList(width int) string {
 		mutedStyle.Width(statusW).Render("status") + " " +
 		mutedStyle.Width(contextW).Render("context")
 	s.WriteString(header + "\n")
-	s.WriteString(dimStyle.Render(strings.Repeat("╌", width)) + "\n")
+	s.WriteString(dimStyle.Render(strings.Repeat("─", width)) + "\n")
 
 	for i, wtIdx := range m.filtered {
 		s.WriteString(renderWorktreeRow(m, i, wtIdx, width, branchW, activityW, statusW, contextW) + "\n")
@@ -1173,7 +1186,7 @@ func renderWorktreeRow(m model, cursorIdx, wtIdx, rowW, branchW, activityW, stat
 		branchLabel = "★ " + branchLabel
 	}
 	if m.archived[wt.Branch] {
-		branchLabel = "⌀ " + branchLabel
+		branchLabel = "◌ " + branchLabel
 	}
 	branchLabel = trunc(branchLabel, branchW)
 
@@ -1488,7 +1501,7 @@ func relativeTime(t time.Time) string {
 }
 
 func wrapText(text string, width int) []string {
-	if len(text) <= width {
+	if lipgloss.Width(text) <= width {
 		return []string{text}
 	}
 
@@ -1497,7 +1510,11 @@ func wrapText(text string, width int) []string {
 	currentLine := ""
 
 	for _, word := range words {
-		if len(currentLine)+len(word)+1 <= width {
+		projected := lipgloss.Width(word)
+		if currentLine != "" {
+			projected += lipgloss.Width(currentLine) + 1
+		}
+		if projected <= width {
 			if currentLine != "" {
 				currentLine += " "
 			}
