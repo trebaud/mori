@@ -130,6 +130,63 @@ func FindByBranch(worktrees []Worktree, branch string) *Worktree {
 	return nil
 }
 
+// HasActiveSession returns true if the worktree has a WORKING or WAITING agent session.
+func HasActiveSession(wt Worktree) bool {
+	return wt.Insights.Status == agent.StatusWorking || wt.Insights.Status == agent.StatusWait
+}
+
+// HasUncommittedChanges returns true if the given path has uncommitted git changes.
+func HasUncommittedChanges(path string) bool {
+	return git.HasUncommittedChanges(path)
+}
+
+// FilterByStatus returns worktrees matching the given status string.
+// Valid values: working, idle, waiting, none.
+func FilterByStatus(wts []Worktree, status string) ([]Worktree, error) {
+	target := agent.StatusType(strings.ToUpper(status))
+	valid := map[agent.StatusType]bool{
+		agent.StatusWorking: true,
+		agent.StatusIdle:    true,
+		agent.StatusWait:    true,
+		agent.StatusNone:    true,
+	}
+	if !valid[target] {
+		return nil, fmt.Errorf("invalid status '%s'. Valid values: working, idle, waiting, none", status)
+	}
+	var result []Worktree
+	for _, wt := range wts {
+		if wt.Insights.Status == target {
+			result = append(result, wt)
+		}
+	}
+	return result, nil
+}
+
+// StatusCounts returns a map of status label to count across worktrees.
+func StatusCounts(wts []Worktree) map[string]int {
+	counts := make(map[string]int)
+	for _, wt := range wts {
+		counts[string(wt.Insights.Status)]++
+	}
+	return counts
+}
+
+// ResolveRepo resolves a path to the main git repository root.
+func ResolveRepo(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve path '%s'", path)
+	}
+	if git.IsRepo(absPath) {
+		return absPath, nil
+	}
+	mainRepo, err := git.FindMainRepo(absPath)
+	if err != nil {
+		return "", fmt.Errorf("not a git repository or worktree")
+	}
+	return mainRepo, nil
+}
+
 func makeRelativePath(path, mainPath, home string) string {
 	rel := path
 	if home != "" && strings.HasPrefix(rel, home) {

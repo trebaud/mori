@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/moosecode/mori/internal"
-	"github.com/moosecode/mori/internal/agent"
-	"github.com/moosecode/mori/internal/git"
 )
 
 func Remove(branch string, force bool) error {
@@ -27,11 +25,11 @@ func Remove(branch string, force bool) error {
 	}
 
 	if !force {
-		if target.Insights.Status == agent.StatusWorking || target.Insights.Status == agent.StatusWait {
+		if internal.HasActiveSession(*target) {
 			return fmt.Errorf("worktree '%s' has an active Claude session (%s). Use --force to remove anyway", branch, target.Insights.Status)
 		}
 
-		if git.HasUncommittedChanges(target.Path) {
+		if internal.HasUncommittedChanges(target.Path) {
 			fmt.Fprintf(os.Stderr, "Warning: worktree '%s' has uncommitted changes.\n", branch)
 			fmt.Fprintf(os.Stderr, "Remove anyway? [y/N] ")
 			reader := bufio.NewReader(os.Stdin)

@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,12 +17,22 @@ import (
 )
 
 const (
-	insightsWidth    = 50
 	tickFast         = 2 * time.Second
 	tickSlow         = 10 * time.Second
 	sideByMinWidth   = 120
 	listOnlyMinWidth = 80
 )
+
+func insightsPaneWidth(total int) int {
+	w := total / 3
+	if w < 44 {
+		w = 44
+	}
+	if w > 70 {
+		w = 70
+	}
+	return w
+}
 
 var (
 	headerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
@@ -483,7 +492,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
 				m.statusMsg = &statusMsg{text: "Cannot delete main worktree", isError: true, expires: time.Now().Add(3 * time.Second)}
-			} else if wt.Insights.Status == agent.StatusWorking || wt.Insights.Status == agent.StatusWait {
+			} else if HasActiveSession(*wt) {
 				m.statusMsg = &statusMsg{text: "Worktree has active session — use D to force", isError: true, expires: time.Now().Add(3 * time.Second)}
 			} else {
 				m.mode = modeConfirmDelete
@@ -802,9 +811,10 @@ func (m model) viewSideBySide(width int) string {
 	s.WriteString(m.renderHeader() + "\n")
 	s.WriteString("\n")
 
-	listWidth := width - insightsWidth - 3
+	rightW := insightsPaneWidth(width)
+	listWidth := width - rightW - 3
 	leftPane := m.renderWorktreeList(listWidth)
-	rightPane := renderInsightsPanel(m, insightsWidth)
+	rightPane := renderInsightsPanel(m, rightW)
 
 	leftLines := strings.Split(leftPane, "\n")
 	rightLines := strings.Split(rightPane, "\n")
@@ -814,20 +824,21 @@ func (m model) viewSideBySide(width int) string {
 		maxLines = len(rightLines)
 	}
 
-	for len(leftLines) < maxLines {
-		leftLines = append(leftLines, "")
-	}
 	for len(rightLines) < maxLines {
 		rightLines = append(rightLines, "")
 	}
 
 	divider := dimStyle.Render("│")
-	leftColStyle := lipgloss.NewStyle().Width(listWidth)
+	padStyle := lipgloss.NewStyle().Width(listWidth)
 
 	for i := 0; i < maxLines; i++ {
-		left := leftColStyle.Render(leftLines[i])
-		right := rightLines[i]
-		s.WriteString(left + " " + divider + " " + right + "\n")
+		var left string
+		if i < len(leftLines) {
+			left = leftLines[i]
+		} else {
+			left = padStyle.Render("")
+		}
+		s.WriteString(left + " " + divider + " " + rightLines[i] + "\n")
 	}
 
 	s.WriteString("\n")
@@ -932,7 +943,11 @@ func (m model) renderFooter() string {
 	}
 
 	var parts []string
-	parts = append(parts, "[?] Help  [o] Open  [q] Quit")
+	insightsHint := "[Enter] Insights"
+	if m.showInsights {
+		insightsHint = "[Enter] Hide insights"
+	}
+	parts = append(parts, "[?] Help  [o] Open  "+insightsHint+"  [q] Quit")
 
 	// Sort & filter indicators
 	var indicators []string
@@ -948,16 +963,19 @@ func (m model) renderFooter() string {
 	return footerStyle.Render(strings.Join(parts, "  "))
 }
 
-func colWidths(width int) (int, int, int, int) {
-	branchW := 34
-	activityW := 10
-	sessionW := 12
-	contextW := 10
+func colWidths(width int) (branchW, activityW, sessionW, contextW int) {
+	activityW, sessionW, contextW = 10, 12, 10
 	if width > 100 {
-		branchW = 44
 		activityW = 12
 	}
-	return branchW, activityW, sessionW, contextW
+	branchW = width - 4 - activityW - sessionW - contextW
+	if branchW < 20 {
+		branchW = 20
+	}
+	if branchW > 60 {
+		branchW = 60
+	}
+	return
 }
 
 func (m model) renderWorktreeList(width int) string {
@@ -1306,36 +1324,3 @@ func renderContextBar(percent float64, label string) string {
 	return dimStyle.Render("[") + barStyle.Render(bar) + dimStyle.Render("] ") + dimStyle.Render(label)
 }
 
-// --- Archive persistence ---
-
-func archivePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".mori", "archived.json")
-}
-
-func loadArchived() map[string]bool {
-	data, err := os.ReadFile(archivePath())
-	if err != nil {
-		return make(map[string]bool)
-	}
-	var branches []string
-	if json.Unmarshal(data, &branches) != nil {
-		return make(map[string]bool)
-	}
-	m := make(map[string]bool, len(branches))
-	for _, b := range branches {
-		m[b] = true
-	}
-	return m
-}
-
-func saveArchived(m map[string]bool) {
-	var branches []string
-	for b := range m {
-		branches = append(branches, b)
-	}
-	sort.Strings(branches)
-	data, _ := json.Marshal(branches)
-	os.MkdirAll(filepath.Dir(archivePath()), 0755)
-	os.WriteFile(archivePath(), data, 0644)
-}

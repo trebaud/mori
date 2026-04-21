@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/moosecode/mori/internal"
-	"github.com/moosecode/mori/internal/git"
 )
 
 type CreateOptions struct {
@@ -22,17 +20,9 @@ func Create(opts CreateOptions) error {
 		repo = "."
 	}
 
-	absRepo, err := filepath.Abs(repo)
+	absRepo, err := internal.ResolveRepo(repo)
 	if err != nil {
-		return fmt.Errorf("cannot resolve repo dir '%s'", repo)
-	}
-
-	if !git.IsRepo(absRepo) {
-		mainRepo, err := git.FindMainRepo(absRepo)
-		if err != nil {
-			return fmt.Errorf("not a git repository or worktree")
-		}
-		absRepo = mainRepo
+		return err
 	}
 
 	branch := opts.Branch

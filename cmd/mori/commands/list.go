@@ -4,19 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/moosecode/mori/internal"
-	"github.com/moosecode/mori/internal/agent"
 )
-
-var validStatuses = map[agent.StatusType]bool{
-	agent.StatusWorking: true,
-	agent.StatusIdle:    true,
-	agent.StatusWait:    true,
-	agent.StatusNone:    true,
-}
 
 func PrintList(jsonOutput bool, statusFilter string) error {
 	worktrees, err := internal.List()
@@ -25,11 +16,10 @@ func PrintList(jsonOutput bool, statusFilter string) error {
 	}
 
 	if statusFilter != "" {
-		target := agent.StatusType(strings.ToUpper(statusFilter))
-		if !validStatuses[target] {
-			return fmt.Errorf("invalid status '%s'. Valid values: working, idle, waiting, none", statusFilter)
+		worktrees, err = internal.FilterByStatus(worktrees, statusFilter)
+		if err != nil {
+			return err
 		}
-		worktrees = filterByStatus(worktrees, target)
 	}
 
 	if jsonOutput {
@@ -37,16 +27,6 @@ func PrintList(jsonOutput bool, statusFilter string) error {
 	}
 
 	return printTable(worktrees)
-}
-
-func filterByStatus(wts []internal.Worktree, target agent.StatusType) []internal.Worktree {
-	var result []internal.Worktree
-	for _, wt := range wts {
-		if wt.Insights.Status == target {
-			result = append(result, wt)
-		}
-	}
-	return result
 }
 
 type worktreeJSON struct {

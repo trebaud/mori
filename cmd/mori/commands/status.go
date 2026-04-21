@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/moosecode/mori/internal"
-	"github.com/moosecode/mori/internal/agent"
 )
 
 func Status() error {
@@ -13,24 +12,20 @@ func Status() error {
 		return err
 	}
 
-	counts := map[agent.StatusType]int{}
-	for _, wt := range worktrees {
-		counts[wt.Insights.Status]++
-	}
-
+	counts := internal.StatusCounts(worktrees)
 	total := len(worktrees)
 	parts := []string{}
 
-	if n := counts[agent.StatusWorking]; n > 0 {
+	if n := counts["WORKING"]; n > 0 {
 		parts = append(parts, fmt.Sprintf("%d working", n))
 	}
-	if n := counts[agent.StatusWait]; n > 0 {
+	if n := counts["WAITING"]; n > 0 {
 		parts = append(parts, fmt.Sprintf("%d waiting", n))
 	}
-	if n := counts[agent.StatusIdle]; n > 0 {
+	if n := counts["IDLE"]; n > 0 {
 		parts = append(parts, fmt.Sprintf("%d idle", n))
 	}
-	if n := counts[agent.StatusNone]; n > 0 {
+	if n := counts["NONE"]; n > 0 {
 		parts = append(parts, fmt.Sprintf("%d no session", n))
 	}
 
