@@ -75,22 +75,44 @@ mori remove feat --force       # Remove without confirmation
 
 ### TUI Keybindings
 
+**Navigation**
 | Key | Action |
 |-----|--------|
-| `j`/`k`, `↑`/`↓` | Navigate |
-| `Enter` | Select worktree (copy `cd` command to clipboard) |
-| `i` | Toggle insights panel |
+| `j`/`k`, `↑`/`↓` | Move cursor |
+| `g` / `G` | Jump to first / last |
+| `ctrl+d` / `ctrl+u` | Half-page down / up |
+| `w` | Jump to next working/waiting worktree |
+| `Enter` | Toggle insights panel |
+| `o` | Open Claude Code in selected worktree |
+| `q`, `ctrl+c` | Quit |
+
+**Actions**
+| Key | Action |
+|-----|--------|
 | `n` | Create new worktree |
 | `d` / `D` | Delete worktree / force delete |
-| `/` | Filter by branch or path |
-| `s` | Cycle sort (status / activity / name) |
+| `y` | Yank (copy) worktree path to clipboard |
+| `m` | Send message to a waiting agent |
 | `r` | Refresh now |
-| `?` | Show all keybindings |
-| `q` | Quit |
+| `?` | Toggle keybindings help |
+
+**Search, sort & filter**
+| Key | Action |
+|-----|--------|
+| `/` | Search by branch or path |
+| `s` | Cycle sort (default / status / activity / name) |
+| `f` | Cycle status filter (all / working / waiting / idle / none) |
+| `Esc` | Clear filter / cancel input |
+
+**Archive**
+| Key | Action |
+|-----|--------|
+| `x` | Archive / unarchive selected worktree |
+| `X` | Toggle showing archived worktrees |
 
 ### Agent Insights
 
-Press `i` to see details for the selected worktree:
+Press `Enter` to toggle the insights panel for the selected worktree:
 
 ```
  AGENT INSIGHTS
