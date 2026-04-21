@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -184,9 +186,10 @@ type model struct {
 	showHelp      bool
 	tick          time.Time
 
-	mode      inputMode
-	textInput textinput.Model
-	statusMsg *statusMsg
+	mode         inputMode
+	textInput    textinput.Model
+	messageInput textarea.Model
+	statusMsg    *statusMsg
 
 	sortMode     sortMode
 	statusFilter statusFilter
@@ -198,12 +201,37 @@ type model struct {
 	showArchive bool
 }
 
+// newMessageTextarea builds the multi-line prompt editor used by the "m"
+// (message) command. Enter is reserved for submit — newlines are entered with
+// ctrl+j or alt+enter.
+func newMessageTextarea() textarea.Model {
+	ta := textarea.New()
+	ta.Prompt = "│ "
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 4000
+	ta.MaxHeight = 0
+	ta.SetHeight(8)
+	ta.Placeholder = "Describe what the agent should do…"
+
+	km := textarea.DefaultKeyMap()
+	// Enter submits; newlines via shift+enter (when the terminal reports it),
+	// alt/option+enter, or ctrl+j.
+	km.InsertNewline = key.NewBinding(
+		key.WithKeys("shift+enter", "alt+enter", "ctrl+j"),
+		key.WithHelp("shift+enter", "newline"),
+	)
+	ta.KeyMap = km
+	return ta
+}
+
 func Run(worktrees []Worktree) {
 	for {
 		currentBranch := git.CurrentBranch()
 
 		ti := textinput.New()
 		ti.CharLimit = 60
+
+		ta := newMessageTextarea()
 
 		if refreshed, err := List(); err == nil {
 			worktrees = refreshed
@@ -222,6 +250,7 @@ func Run(worktrees []Worktree) {
 			showInsights:  false,
 			tick:          time.Now(),
 			textInput:     ti,
+			messageInput:  ta,
 			mode:          modeNormal,
 			sortMode:      sortDefault,
 			archived:      loadArchived(),
@@ -359,6 +388,24 @@ func statusRank(s agent.StatusType) int {
 	}
 }
 
+// messageInputWidth returns the inner width to give the prompt textarea so it
+// fits within its framed card.
+func (m model) messageInputWidth() int {
+	total := m.width
+	if total == 0 {
+		total = 80
+	}
+	cardW := total - 4
+	if cardW > 100 {
+		cardW = 100
+	}
+	if cardW < 30 {
+		cardW = 30
+	}
+	// card outer -2 borders -2 inner padding = inner content width
+	return cardW - 4
+}
+
 func (m model) selectedWorktree() *Worktree {
 	if m.cursor < len(m.filtered) {
 		return &m.worktrees[m.filtered[m.cursor]]
@@ -371,6 +418,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.messageInput.SetWidth(m.messageInputWidth())
 		return m, nil
 
 	case time.Time:
@@ -418,6 +466,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
+		if m.mode == modeMessage {
+			var cmd tea.Cmd
+			m.messageInput, cmd = m.messageInput.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -560,10 +616,9 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "m":
 		if m.selectedWorktree() != nil {
 			m.mode = modeMessage
-			m.textInput.Placeholder = "prompt for new claude agent…"
-			m.textInput.CharLimit = 500
-			m.textInput.SetValue("")
-			return m, m.textInput.Focus()
+			m.messageInput.Reset()
+			m.messageInput.SetWidth(m.messageInputWidth())
+			return m, m.messageInput.Focus()
 		}
 
 	case "x":
@@ -670,33 +725,29 @@ func (m model) handleMessageKey(msg tea.KeyPressMsg, key string) (tea.Model, tea
 		return m, tea.Quit
 	case "esc":
 		m.mode = modeNormal
-		m.textInput.Blur()
-		m.textInput.CharLimit = 60
+		m.messageInput.Blur()
 		return m, nil
 	case "enter":
-		text := strings.TrimSpace(m.textInput.Value())
+		text := strings.TrimSpace(m.messageInput.Value())
 		if text == "" {
 			m.mode = modeNormal
-			m.textInput.Blur()
-			m.textInput.CharLimit = 60
+			m.messageInput.Blur()
 			return m, nil
 		}
 		wt := m.selectedWorktree()
 		if wt == nil {
 			m.mode = modeNormal
-			m.textInput.Blur()
-			m.textInput.CharLimit = 60
+			m.messageInput.Blur()
 			return m, nil
 		}
 		m.mode = modeNormal
-		m.textInput.Blur()
-		m.textInput.CharLimit = 60
+		m.messageInput.Blur()
 		m.statusMsg = &statusMsg{text: "launching agent…", isLoading: true, expires: time.Now().Add(statusLoadingMax)}
 		return m, m.launchAgentCmd(*wt, text)
 	}
 
 	var cmd tea.Cmd
-	m.textInput, cmd = m.textInput.Update(msg)
+	m.messageInput, cmd = m.messageInput.Update(msg)
 	return m, cmd
 }
 
@@ -798,6 +849,8 @@ func (m model) View() tea.View {
 
 	var v tea.View
 	switch {
+	case m.mode == modeMessage:
+		v = tea.NewView(m.viewMessage(totalWidth))
 	case m.showHelp:
 		v = tea.NewView(m.viewHelp(totalWidth))
 	case m.showInsights && totalWidth >= sideByMinWidth:
@@ -1028,14 +1081,62 @@ func (m model) viewHelp(width int) string {
 	return "\n" + m.renderTopBar(width) + "\n\n" + framed + "\n" + mutedStyle.Render(" [?] close  [q] quit") + "\n"
 }
 
+func (m model) viewMessage(width int) string {
+	cardW := width - 4
+	if cardW > 100 {
+		cardW = 100
+	}
+	if cardW < 34 {
+		cardW = 34
+	}
+
+	wt := m.selectedWorktree()
+	var target string
+	if wt != nil {
+		target = mutedStyle.Render("target ") + textStyle.Render(wt.Branch)
+		if wt.Insights.SessionID != "" {
+			target += mutedStyle.Render("  ·  resumes existing session")
+		} else {
+			target += mutedStyle.Render("  ·  starts new session")
+		}
+	}
+
+	// Textarea view — the textarea already renders its own prompt column and
+	// cursor; we just wrap it with padding inside the framed card.
+	inner := m.messageInput.View()
+
+	var content strings.Builder
+	if target != "" {
+		content.WriteString(" " + target + "\n")
+		content.WriteString(dimStyle.Render(strings.Repeat("─", cardW-2)) + "\n")
+	}
+	content.WriteString(inner)
+
+	framed := renderFrame(content.String(), cardW, "agent prompt")
+
+	indent := (width - cardW) / 2
+	if indent < 0 {
+		indent = 0
+	}
+	pad := strings.Repeat(" ", indent)
+
+	framedLines := strings.Split(framed, "\n")
+	for i, ln := range framedLines {
+		framedLines[i] = pad + ln
+	}
+
+	hint := mutedStyle.Render(" [enter] launch  [shift+enter] newline  [ctrl+v] paste  [esc] cancel")
+
+	top := m.renderTopBar(width)
+	return "\n" + top + "\n\n" + strings.Join(framedLines, "\n") + "\n" + hint + "\n"
+}
+
 func (m model) renderInputLine() string {
 	switch m.mode {
 	case modeSearch:
 		return " " + titleStyle.Render("/") + " " + m.textInput.View()
 	case modeCreate:
 		return " " + titleStyle.Render("new worktree ›") + " " + m.textInput.View()
-	case modeMessage:
-		return " " + waitingStyle.Render("agent prompt ›") + " " + m.textInput.View()
 	case modeConfirmDelete:
 		if m.deleteTarget < len(m.filtered) {
 			wt := m.worktrees[m.filtered[m.deleteTarget]]
@@ -1060,9 +1161,6 @@ func (m model) renderInputLine() string {
 func (m model) renderFooter(width int) string {
 	if m.mode == modeSearch {
 		return " " + mutedStyle.Render("[enter] apply  [esc] clear  [↑/↓] navigate")
-	}
-	if m.mode == modeMessage {
-		return " " + mutedStyle.Render("[enter] launch  [esc] cancel")
 	}
 
 	insightsHint := "[enter] insights"
