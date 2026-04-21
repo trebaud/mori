@@ -1069,7 +1069,7 @@ func (m model) renderFooter(width int) string {
 	if m.showInsights {
 		insightsHint = "[enter] hide"
 	}
-	left := mutedStyle.Render("[?] help  [o] open  " + insightsHint + "  [q] quit")
+	left := mutedStyle.Render("[?] help  [o] open  " + insightsHint + "  [n] new  [d] delete  [m] message  [q] quit")
 
 	var indicators []string
 	indicators = append(indicators, mutedStyle.Render("sort ")+textStyle.Render(m.sortMode.String()))
