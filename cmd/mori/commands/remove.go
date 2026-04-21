@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/moosecode/mori/internal"
+	"github.com/trebaud/mori/internal"
 )
 
 func Remove(branch string, force bool) error {

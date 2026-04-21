@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/moosecode/mori/internal/agent"
-	"github.com/moosecode/mori/internal/git"
+	"github.com/trebaud/mori/internal/agent"
+	"github.com/trebaud/mori/internal/git"
 )
 
 type Worktree struct {

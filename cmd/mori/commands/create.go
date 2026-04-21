@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
-	"github.com/moosecode/mori/internal"
+	"github.com/trebaud/mori/internal"
 )
 
 type CreateOptions struct {
@@ -50,8 +52,24 @@ func Create(opts CreateOptions) error {
 	fmt.Fprintf(os.Stderr, "\n  \033[0;90m%s\033[0m\n\n", result.Dir)
 
 	if opts.LaunchClaude {
-		fmt.Fprintf(os.Stderr, "\n\033[0;36m  Launching Claude Code...\033[0m\n")
-		exec.Command("claude", "--worktree", branch).Run()
+		claudePath, err := exec.LookPath("claude")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "    \033[1;31m✖\033[0m claude not found in PATH\n")
+			return nil
+		}
+
+		args := []string{"--tmux"}
+		if branch != result.BaseBranch {
+			args = append(args, "--worktree", filepath.Base(result.Dir))
+		}
+
+		fmt.Fprintf(os.Stderr, "  \033[0;90m%s\033[0m\n\n", "claude "+strings.Join(args, " "))
+		cmd := exec.Command(claudePath, args...)
+		cmd.Dir = result.Dir
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Run()
 	}
 
 	return nil

@@ -6,7 +6,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/moosecode/mori/internal"
+	"github.com/trebaud/mori/internal"
 )
 
 func PrintList(jsonOutput bool, statusFilter string) error {

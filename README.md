@@ -18,13 +18,21 @@ A TUI for managing git worktrees with Claude Code agent insights.
 
 ## Install
 
+With `go install`:
+
+```bash
+go install github.com/trebaud/mori/cmd/mori@latest
+```
+
+This drops the `mori` binary in `$(go env GOPATH)/bin` — make sure that's on your `$PATH`.
+
+Or from source:
+
 ```bash
 git clone https://github.com/trebaud/mori.git
 cd mori
 ./scripts/install.sh
 ```
-
-This builds the binary and installs it to your PATH.
 
 ## Usage
 

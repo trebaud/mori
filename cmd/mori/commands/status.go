@@ -3,7 +3,7 @@ package commands
 import (
 	"fmt"
 
-	"github.com/moosecode/mori/internal"
+	"github.com/trebaud/mori/internal"
 )
 
 func Status() error {

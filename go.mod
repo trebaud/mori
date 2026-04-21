@@ -1,4 +1,4 @@
-module github.com/moosecode/mori
+module github.com/trebaud/mori
 
 go 1.26.1
 

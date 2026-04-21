@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moosecode/mori/internal/git"
+	"github.com/trebaud/mori/internal/git"
 )
 
 type StatusType string

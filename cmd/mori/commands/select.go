@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/moosecode/mori/internal"
+	"github.com/trebaud/mori/internal"
 )
 
 func Select() {

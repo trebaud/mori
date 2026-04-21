@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/moosecode/mori/cmd/mori/commands"
+	"github.com/trebaud/mori/cmd/mori/commands"
 )
 
 const version = "1.1.0"
