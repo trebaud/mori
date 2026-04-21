@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -396,9 +397,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case messageSentMsg:
 		if msg.err != nil {
-			m.statusMsg = &statusMsg{text: "message failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
+			m.statusMsg = &statusMsg{text: "launch failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(5 * time.Second)}
 		} else {
-			m.statusMsg = &statusMsg{text: "message sent", expires: time.Now().Add(3 * time.Second)}
+			text := "agent launched"
+			if msg.logPath != "" {
+				text = "agent launched — log: " + msg.logPath
+			}
+			m.statusMsg = &statusMsg{text: text, expires: time.Now().Add(8 * time.Second)}
 		}
 		return m, nil
 
@@ -544,15 +549,12 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		}
 
 	case "m":
-		if wt := m.selectedWorktree(); wt != nil {
-			if wt.Insights.Status != agent.StatusWait {
-				m.statusMsg = &statusMsg{text: "agent is not WAITING", isError: true, expires: time.Now().Add(3 * time.Second)}
-			} else {
-				m.mode = modeMessage
-				m.textInput.Placeholder = "message to send..."
-				m.textInput.SetValue("")
-				return m, m.textInput.Focus()
-			}
+		if m.selectedWorktree() != nil {
+			m.mode = modeMessage
+			m.textInput.Placeholder = "prompt for new claude agent..."
+			m.textInput.CharLimit = 500
+			m.textInput.SetValue("")
+			return m, m.textInput.Focus()
 		}
 
 	case "x":
@@ -649,7 +651,8 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 }
 
 type messageSentMsg struct {
-	err error
+	err     error
+	logPath string
 }
 
 func (m model) handleMessageKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
@@ -659,24 +662,28 @@ func (m model) handleMessageKey(msg tea.KeyPressMsg, key string) (tea.Model, tea
 	case "esc":
 		m.mode = modeNormal
 		m.textInput.Blur()
+		m.textInput.CharLimit = 60
 		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.textInput.Value())
 		if text == "" {
 			m.mode = modeNormal
 			m.textInput.Blur()
+			m.textInput.CharLimit = 60
 			return m, nil
 		}
 		wt := m.selectedWorktree()
 		if wt == nil {
 			m.mode = modeNormal
 			m.textInput.Blur()
+			m.textInput.CharLimit = 60
 			return m, nil
 		}
 		m.mode = modeNormal
 		m.textInput.Blur()
-		m.statusMsg = &statusMsg{text: "sending message...", expires: time.Now().Add(10 * time.Second)}
-		return m, m.sendMessageCmd(wt.Path, text)
+		m.textInput.CharLimit = 60
+		m.statusMsg = &statusMsg{text: "launching agent...", expires: time.Now().Add(10 * time.Second)}
+		return m, m.launchAgentCmd(*wt, text)
 	}
 
 	var cmd tea.Cmd
@@ -684,17 +691,45 @@ func (m model) handleMessageKey(msg tea.KeyPressMsg, key string) (tea.Model, tea
 	return m, cmd
 }
 
-func (m model) sendMessageCmd(worktreePath, text string) tea.Cmd {
+func (m model) launchAgentCmd(wt Worktree, text string) tea.Cmd {
 	return func() tea.Msg {
 		claudePath, err := exec.LookPath("claude")
 		if err != nil {
 			return messageSentMsg{err: fmt.Errorf("claude not found in PATH")}
 		}
-		cmd := exec.Command(claudePath, "--worktree", filepath.Base(worktreePath), "--yes", "-p", text)
-		if err := cmd.Run(); err != nil {
+
+		var args []string
+		if wt.Insights.SessionID != "" {
+			args = append(args, "--resume", wt.Insights.SessionID)
+		}
+		args = append(args, "--dangerously-skip-permissions", "-p", text)
+
+		cmd := exec.Command(claudePath, args...)
+		cmd.Dir = wt.Path
+
+		logPath := filepath.Join(os.TempDir(), fmt.Sprintf("mori-agent-%s-%d.log", filepath.Base(wt.Path), time.Now().Unix()))
+		logFile, logErr := os.Create(logPath)
+		if logErr == nil {
+			fmt.Fprintf(logFile, "mori launch @ %s\ncwd: %s\ncmd: %s %s\n---\n",
+				time.Now().Format(time.RFC3339), wt.Path, claudePath, strings.Join(args, " "))
+			cmd.Stdout = logFile
+			cmd.Stderr = logFile
+		}
+		devNull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
+		if err == nil {
+			cmd.Stdin = devNull
+			defer devNull.Close()
+		}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+		if err := cmd.Start(); err != nil {
+			if logFile != nil {
+				logFile.Close()
+			}
 			return messageSentMsg{err: err}
 		}
-		return messageSentMsg{}
+		_ = cmd.Process.Release()
+		return messageSentMsg{logPath: logPath}
 	}
 }
 
@@ -949,7 +984,7 @@ func (m model) viewHelp(width int) string {
 			{"d", "delete worktree"},
 			{"D", "force delete"},
 			{"y", "yank (copy) worktree path"},
-			{"m", "message a waiting agent"},
+			{"m", "launch agent with prompt (background)"},
 			{"r", "refresh insights now"},
 			{"?", "toggle this help"},
 		}},
@@ -991,7 +1026,7 @@ func (m model) renderInputLine() string {
 	case modeCreate:
 		return " " + titleStyle.Render("new worktree ›") + " " + m.textInput.View()
 	case modeMessage:
-		return " " + waitingStyle.Render("message ›") + " " + m.textInput.View()
+		return " " + waitingStyle.Render("agent prompt ›") + " " + m.textInput.View()
 	case modeConfirmDelete:
 		if m.deleteTarget < len(m.filtered) {
 			wt := m.worktrees[m.filtered[m.deleteTarget]]
@@ -1014,7 +1049,7 @@ func (m model) renderFooter(width int) string {
 		return " " + mutedStyle.Render("[enter] apply  [esc] clear  [↑/↓] navigate")
 	}
 	if m.mode == modeMessage {
-		return " " + mutedStyle.Render("[enter] send  [esc] cancel")
+		return " " + mutedStyle.Render("[enter] launch  [esc] cancel")
 	}
 
 	insightsHint := "[enter] insights"
