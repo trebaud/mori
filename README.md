@@ -19,7 +19,7 @@ A TUI for managing git worktrees with Claude Code agent insights.
 ## Install
 
 ```bash
-git clone https://github.com/moosecode/mori.git
+git clone https://github.com/trebaud/mori.git
 cd mori
 ./scripts/install.sh
 ```
