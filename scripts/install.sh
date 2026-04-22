@@ -103,8 +103,10 @@ check_go() {
 build_binary() {
   info "Building mori..."
   mkdir -p bin
-  go build -o bin/"$BIN_NAME" ./cmd/mori
-  ok "Binary built: bin/$BIN_NAME"
+  local version
+  version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+  go build -ldflags "-X main.ldflagsVersion=${version#v}" -o bin/"$BIN_NAME" ./cmd/mori
+  ok "Binary built: bin/$BIN_NAME (v${version#v})"
 }
 
 install_binary() {
