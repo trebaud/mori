@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/trebaud/mori/internal"
+	"github.com/trebaud/mori/internal/tui"
 )
 
 func Select() {
@@ -14,5 +15,5 @@ func Select() {
 		os.Exit(1)
 	}
 
-	internal.Run(worktrees)
+	tui.Run(worktrees)
 }
