@@ -3,13 +3,32 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/trebaud/mori/cmd/mori/commands"
 )
 
-const version = "1.1.0"
+// version can be set at build time via -ldflags "-X main.version=$(git describe --tags)".
+// When installed via `go install ...@tag`, it falls back to the module version embedded
+// by the Go toolchain (e.g. v1.1.1).
+var version = resolveVersion()
+
+func resolveVersion() string {
+	if v := strings.TrimPrefix(ldflagsVersion, "v"); v != "" && v != "dev" {
+		return v
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := strings.TrimPrefix(bi.Main.Version, "v"); v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return "dev"
+}
+
+var ldflagsVersion = "dev"
 
 func main() {
 	if err := rootCmd().Execute(); err != nil {
@@ -32,8 +51,9 @@ func rootCmd() *cobra.Command {
 	}
 	root.SetVersionTemplate("mori v{{.Version}}\n")
 	root.Flags().BoolP("version", "v", false, "Show version")
-	root.SetHelpTemplate(helpTemplate)
-	root.SetUsageTemplate(helpTemplate)
+	tmpl := helpTemplate()
+	root.SetHelpTemplate(tmpl)
+	root.SetUsageTemplate(tmpl)
 
 	root.AddCommand(newCmd(), listCmd(), removeCmd(), openCmd(), statusCmd(), versionCmd())
 	return root
@@ -138,7 +158,8 @@ func versionCmd() *cobra.Command {
 	}
 }
 
-const helpTemplate = `Mori v` + version + ` - Git worktree manager with Claude Code insights
+func helpTemplate() string {
+	return `Mori v` + version + ` - Git worktree manager with Claude Code insights
 
 Usage:
   mori                          Launch interactive TUI
@@ -170,3 +191,4 @@ TUI keys:
   /              Filter           s       Cycle sort mode
   r              Refresh          ?       Show all keybindings
 `
+}
