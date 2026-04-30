@@ -407,14 +407,19 @@ func TestOpenExistingBranch(t *testing.T) {
 	t.Parallel()
 	dir := initTestRepoWithWorktree(t, "open-me")
 
-	res := runMori(t, dir, "open", "open-me")
+	stub, err := filepath.Abs("fixtures/claude-stub.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := runMoriEnv(t, dir, []string{"MORI_CLAUDE_PATH=" + stub}, "open", "open-me")
 	if res.exitCode != 0 {
 		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
 	}
 
 	path := strings.TrimSpace(res.stdout)
 	if path == "" {
-		t.Fatal("expected path in stdout, got empty")
+		t.Fatal("expected stub to print worktree path, got empty")
 	}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Errorf("printed path does not exist: %s", path)
@@ -615,8 +620,12 @@ func TestFullLifecycle(t *testing.T) {
 		t.Fatalf("list JSON missing branch %q", branch)
 	}
 
-	// 3. Open prints its path
-	res = runMori(t, dir, "open", branch)
+	// 3. Open launches claude inside the worktree
+	stub, err := filepath.Abs("fixtures/claude-stub.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = runMoriEnv(t, dir, []string{"MORI_CLAUDE_PATH=" + stub}, "open", branch)
 	if res.exitCode != 0 {
 		t.Fatalf("open: exit %d", res.exitCode)
 	}

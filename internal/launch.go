@@ -15,9 +15,13 @@ import (
 // inside tmux via `--tmux`, with `--worktree` set when the worktree isn't the
 // repo's default branch.
 func LaunchClaude(wt Worktree) error {
-	claudePath, err := exec.LookPath("claude")
-	if err != nil {
-		return fmt.Errorf("claude not found in PATH")
+	claudePath := os.Getenv("MORI_CLAUDE_PATH")
+	if claudePath == "" {
+		p, err := exec.LookPath("claude")
+		if err != nil {
+			return fmt.Errorf("claude not found in PATH")
+		}
+		claudePath = p
 	}
 
 	baseArgs := []string{"--tmux"}
