@@ -12,6 +12,7 @@ A TUI for managing git worktrees with Claude Code agent insights.
 - Side-by-side worktree list + agent insights panel
 - Session status tracking: WORKING, IDLE, WAITING, NONE
 - Per-worktree insights: cost, context usage, current task, git log, ahead/behind
+- PR tracking: shows GitHub PR state (open/draft/merged/closed) per branch via [`gh`](https://cli.github.com/)
 - Search/filter (`/`) and sort (`s`) worktrees
 - Adaptive refresh: 2s when agents are active, 10s when idle
 - Includes a [Claude Code skill](skill/SKILL.md) so Claude can manage worktrees for you
@@ -102,6 +103,7 @@ mori remove feat --force       # Remove without confirmation
 | `y` | Yank (copy) worktree path to clipboard |
 | `m` | Send message to a waiting agent |
 | `r` | Refresh now |
+| `p` | Refresh PR status |
 | `?` | Toggle keybindings help |
 
 **Search, sort & filter**
@@ -131,6 +133,7 @@ MODEL:       opus / acceptEdits
 COST:        $1.42
 CONTEXT:     [██████░░░░] 62% (124k/200k)
 BRANCH:      +3/-0
+PR:          ● #1234 open · refactor JWT middleware
 TASK:
   Refactor JWT middleware to use the new Redis cache.
 
@@ -190,6 +193,7 @@ Run them at the same time, watch cost and progress in the TUI, then keep the bes
 - Git
 - [tmux](https://github.com/tmux/tmux) (used to launch and manage Claude Code sessions)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (for agent sessions and insights)
+- [gh](https://cli.github.com/) (optional, for PR status)
 
 ## License
 

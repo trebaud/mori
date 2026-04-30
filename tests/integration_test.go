@@ -44,9 +44,18 @@ type moriResult struct {
 }
 
 func runMori(t *testing.T, dir string, args ...string) moriResult {
+	return runMoriEnv(t, dir, nil, args...)
+}
+
+// runMoriEnv runs mori with extra env vars appended after the parent env.
+// By default MORI_GH_PATH is set to an unreachable path so tests don't hit a
+// real gh on the host; tests that need a stub can override via extraEnv.
+func runMoriEnv(t *testing.T, dir string, extraEnv []string, args ...string) moriResult {
 	t.Helper()
 	cmd := exec.Command(moriBinary, args...)
 	cmd.Dir = dir
+	env := append(os.Environ(), "MORI_GH_PATH=/nonexistent/gh")
+	cmd.Env = append(env, extraEnv...)
 
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -641,5 +650,82 @@ func TestFullLifecycle(t *testing.T) {
 	res = runMori(t, dir, "status")
 	if !strings.Contains(res.stdout, "1 worktrees") {
 		t.Errorf("expected '1 worktrees' after removal, got: %q", res.stdout)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Group 5: PR status (gh integration)
+// ---------------------------------------------------------------------------
+
+func TestListJSONOmitsPRWhenGhMissing(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepoWithWorktree(t, "feat-no-gh")
+
+	// runMori already sets MORI_GH_PATH=/nonexistent/gh; so gh fetches fail.
+	res := runMori(t, dir, "list", "--json")
+	if res.exitCode != 0 {
+		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
+	}
+	if strings.Contains(res.stdout, `"pr"`) {
+		t.Errorf("expected no pr field when gh missing, got: %s", res.stdout)
+	}
+}
+
+func TestListJSONIncludesPRWithGhStub(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepoWithWorktree(t, "feat-with-pr")
+
+	stub, err := filepath.Abs("fixtures/gh-stub-pr.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := runMoriEnv(t, dir, []string{"MORI_GH_PATH=" + stub}, "list", "--json")
+	if res.exitCode != 0 {
+		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
+	}
+
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(res.stdout), &items); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, res.stdout)
+	}
+
+	var found bool
+	for _, item := range items {
+		if item["branch"] != "feat-with-pr" {
+			continue
+		}
+		pr, ok := item["pr"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected pr object on worktree, got: %v", item)
+		}
+		if int(pr["number"].(float64)) != 42 {
+			t.Errorf("expected PR number 42, got: %v", pr["number"])
+		}
+		if pr["state"] != "open" {
+			t.Errorf("expected state=open, got: %v", pr["state"])
+		}
+		found = true
+	}
+	if !found {
+		t.Errorf("did not find feat-with-pr worktree in output: %s", res.stdout)
+	}
+}
+
+func TestListJSONOmitsPRWhenStubReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepoWithWorktree(t, "feat-no-pr")
+
+	stub, err := filepath.Abs("fixtures/gh-stub-empty.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := runMoriEnv(t, dir, []string{"MORI_GH_PATH=" + stub}, "list", "--json")
+	if res.exitCode != 0 {
+		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
+	}
+	if strings.Contains(res.stdout, `"pr"`) {
+		t.Errorf("expected no pr field when stub returns empty, got: %s", res.stdout)
 	}
 }

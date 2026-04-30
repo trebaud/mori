@@ -11,8 +11,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/trebaud/mori/internal/agent"
+	"github.com/trebaud/mori/internal/github"
+	"github.com/trebaud/mori/internal/insights"
 )
+
+const prColMinWidth = 110
 
 // View is the Elm view function — it dispatches to a layout based on mode and
 // terminal width. All rendering below is pure: model in, string out.
@@ -202,12 +205,19 @@ func renderFrame(content string, width int, title string) string {
 
 // --- Worktree list ---
 
-func colWidths(width int) (branchW, activityW, statusW, contextW int) {
+func colWidths(width int) (branchW, activityW, statusW, contextW, prW int) {
 	activityW, statusW, contextW = 10, 12, 10
 	if width > 100 {
 		activityW = 12
 	}
-	branchW = width - 2 - activityW - statusW - contextW - 3
+	if width >= prColMinWidth {
+		prW = 8
+	}
+	separators := 3
+	if prW > 0 {
+		separators = 4
+	}
+	branchW = width - 2 - activityW - statusW - contextW - prW - separators
 	if branchW < 20 {
 		branchW = 20
 	}
@@ -220,18 +230,21 @@ func colWidths(width int) (branchW, activityW, statusW, contextW int) {
 func (m model) renderWorktreeList(width int) string {
 	var s strings.Builder
 
-	branchW, activityW, statusW, contextW := colWidths(width)
+	branchW, activityW, statusW, contextW, prW := colWidths(width)
 
 	header := "  " +
 		mutedStyle.Width(branchW).Render("branch") + " " +
 		mutedStyle.Width(activityW).Render("activity") + " " +
 		mutedStyle.Width(statusW).Render("status") + " " +
 		mutedStyle.Width(contextW).Render("context")
+	if prW > 0 {
+		header += " " + mutedStyle.Width(prW).Render("pr")
+	}
 	s.WriteString(header + "\n")
 	s.WriteString(dimStyle.Render(strings.Repeat("─", width)) + "\n")
 
 	for i, wtIdx := range m.filtered {
-		s.WriteString(m.renderWorktreeRow(i, wtIdx, width, branchW, activityW, statusW, contextW) + "\n")
+		s.WriteString(m.renderWorktreeRow(i, wtIdx, width, branchW, activityW, statusW, contextW, prW) + "\n")
 	}
 
 	if len(m.filtered) == 0 {
@@ -241,7 +254,7 @@ func (m model) renderWorktreeList(width int) string {
 	return s.String()
 }
 
-func (m model) renderWorktreeRow(cursorIdx, wtIdx, rowW, branchW, activityW, statusW, contextW int) string {
+func (m model) renderWorktreeRow(cursorIdx, wtIdx, rowW, branchW, activityW, statusW, contextW, prW int) string {
 	wt := m.worktrees[wtIdx]
 	selected := m.cursor == cursorIdx
 
@@ -286,7 +299,7 @@ func (m model) renderWorktreeRow(cursorIdx, wtIdx, rowW, branchW, activityW, sta
 	switch {
 	case selected:
 		accentBar = bg(lipgloss.NewStyle().Foreground(colAccent)).Render("▌")
-	case wt.Insights.Status == agent.StatusWorking || wt.Insights.Status == agent.StatusWait:
+	case wt.Insights.Status == insights.StatusWorking || wt.Insights.Status == insights.StatusWait:
 		accentBar = lipgloss.NewStyle().Foreground(statusColor(wt.Insights.Status)).Render("▏")
 	default:
 		accentBar = " "
@@ -309,6 +322,9 @@ func (m model) renderWorktreeRow(cursorIdx, wtIdx, rowW, branchW, activityW, sta
 	contextCell := bg(contextCellStyle).Render(contextText)
 
 	row := accentBar + sep + branchCell + sep + activityCell + sep + statusCell + sep + contextCell
+	if prW > 0 {
+		row += sep + bg(prCellStyle(wt.PR).Width(prW)).Render(prCellText(wt.PR))
+	}
 
 	if selected {
 		cur := lipgloss.Width(row)
@@ -319,7 +335,7 @@ func (m model) renderWorktreeRow(cursorIdx, wtIdx, rowW, branchW, activityW, sta
 	return row
 }
 
-func renderInlineContextRaw(ins agent.Insights) string {
+func renderInlineContextRaw(ins insights.Insights) string {
 	if ins.InputTokens <= 0 {
 		return "—"
 	}
@@ -331,7 +347,45 @@ func renderInlineContextRaw(ins agent.Insights) string {
 	return fmt.Sprintf("%d%%", int(percent*100))
 }
 
-func contextFgStyle(ins agent.Insights) lipgloss.Style {
+func prCellText(pr *github.PRInfo) string {
+	if pr == nil || pr.Number == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%s#%d", prGlyph(pr), pr.Number)
+}
+
+func prCellStyle(pr *github.PRInfo) lipgloss.Style {
+	if pr == nil || pr.Number == 0 {
+		return mutedStyle
+	}
+	switch pr.State {
+	case github.PRStateOpen:
+		return successStyle
+	case github.PRStateDraft:
+		return mutedStyle
+	case github.PRStateMerged:
+		return titleStyle
+	case github.PRStateClosed:
+		return errorStyle
+	}
+	return mutedStyle
+}
+
+func prGlyph(pr *github.PRInfo) string {
+	switch pr.State {
+	case github.PRStateOpen:
+		return "●"
+	case github.PRStateDraft:
+		return "◐"
+	case github.PRStateMerged:
+		return "✔"
+	case github.PRStateClosed:
+		return "✕"
+	}
+	return "·"
+}
+
+func contextFgStyle(ins insights.Insights) lipgloss.Style {
 	if ins.InputTokens <= 0 {
 		return mutedStyle
 	}
@@ -361,7 +415,7 @@ func (m model) renderInsightsPanel(width int) string {
 	pill := renderStatusPill(wt.Insights.Status)
 	var rightParts []string
 	if wt.Insights.Model != "" {
-		rightParts = append(rightParts, textStyle.Render(agent.ModelTier(wt.Insights.Model)))
+		rightParts = append(rightParts, textStyle.Render(insights.ModelTier(wt.Insights.Model)))
 	}
 	if wt.Insights.Mode != "" && wt.Insights.Mode != "default" {
 		rightParts = append(rightParts, mutedStyle.Render(wt.Insights.Mode))
@@ -379,9 +433,9 @@ func (m model) renderInsightsPanel(width int) string {
 	switch {
 	case wt.Insights.HasError:
 		detail = errorStyle.Render("⚠ last tool errored")
-	case wt.Insights.LastTool != "" && wt.Insights.Status == agent.StatusWorking:
+	case wt.Insights.LastTool != "" && wt.Insights.Status == insights.StatusWorking:
 		detail = mutedStyle.Render("running ") + textStyle.Render(wt.Insights.LastTool)
-	case wt.Insights.Status == agent.StatusIdle && !wt.Insights.LastActivity.IsZero():
+	case wt.Insights.Status == insights.StatusIdle && !wt.Insights.LastActivity.IsZero():
 		detail = mutedStyle.Render("last active " + relativeTime(wt.Insights.LastActivity))
 	}
 	if detail != "" {
@@ -398,7 +452,10 @@ func (m model) renderInsightsPanel(width int) string {
 	if wt.Insights.AheadBehind != "" {
 		s.WriteString(kvRow(" branch", textStyle.Render(wt.Insights.AheadBehind), width) + "\n")
 	}
-	if wt.Insights.Status == agent.StatusWorking && (wt.Insights.TurnDurationS > 0 || wt.Insights.MessageCount > 0) {
+	if wt.PR != nil && wt.PR.Number > 0 {
+		s.WriteString(renderPRSection(wt.PR, width))
+	}
+	if wt.Insights.Status == insights.StatusWorking && (wt.Insights.TurnDurationS > 0 || wt.Insights.MessageCount > 0) {
 		turn := fmt.Sprintf("%ds · %d msgs", wt.Insights.TurnDurationS, wt.Insights.MessageCount)
 		s.WriteString(kvRow(" turn", textStyle.Render(turn), width) + "\n")
 	}
@@ -430,7 +487,7 @@ func (m model) renderInsightsPanel(width int) string {
 	return s.String()
 }
 
-func insightsSessionLabel(ins agent.Insights) string {
+func insightsSessionLabel(ins insights.Insights) string {
 	if ins.Slug != "" {
 		return textStyle.Render(ins.Slug)
 	}
@@ -444,10 +501,35 @@ func insightsSessionLabel(ins agent.Insights) string {
 	return mutedStyle.Render("—")
 }
 
-func renderStatusPill(status agent.StatusType) string {
+func renderStatusPill(status insights.StatusType) string {
 	glyph := statusIcon(status)
 	text := strings.ToLower(string(status))
 	return statusStyle(status).Padding(0, 1).Render(glyph + " " + text)
+}
+
+func renderPRSection(pr *github.PRInfo, width int) string {
+	var s strings.Builder
+	s.WriteString("\n")
+	s.WriteString(" " + headingStyle.Render("pull request") + "\n")
+
+	stateLabel := strings.ToLower(string(pr.State))
+	badge := prCellStyle(pr).Render(prGlyph(pr) + " #" + fmt.Sprintf("%d", pr.Number))
+	titleW := width - lipgloss.Width(badge) - lipgloss.Width(stateLabel) - 8
+	if titleW < 4 {
+		titleW = 4
+	}
+	title := pr.Title
+	if lipgloss.Width(title) > titleW {
+		title = title[:titleW-1] + "…"
+	}
+	s.WriteString("   " + badge + " " + mutedStyle.Render(stateLabel) + " " + mutedStyle.Render("·") + " " + textStyle.Render(title) + "\n")
+
+	url := pr.URL
+	if lipgloss.Width(url) > width-4 {
+		url = url[:width-5] + "…"
+	}
+	s.WriteString("   " + dimStyle.Render(url) + "\n")
+	return s.String()
 }
 
 func kvRow(label, value string, width int) string {
@@ -461,7 +543,7 @@ func kvRow(label, value string, width int) string {
 	return labelCell + strings.Repeat(" ", gap) + value + " "
 }
 
-func renderContextRow(ins agent.Insights, width int) string {
+func renderContextRow(ins insights.Insights, width int) string {
 	var percent float64
 	var label string
 	if ins.InputTokens > 0 {
@@ -559,6 +641,7 @@ func (m model) viewHelp(width int) string {
 			{"y", "yank (copy) worktree path"},
 			{"m", "launch agent with prompt (background)"},
 			{"r", "refresh insights now"},
+			{"p", "refresh PR status"},
 			{"?", "toggle this help"},
 		}},
 		{"search & sort", []struct{ key, desc string }{

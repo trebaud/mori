@@ -5,7 +5,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/trebaud/mori/internal/agent"
+	"github.com/trebaud/mori/internal/insights"
 )
 
 // Palette — one accent + functional colors; everything else is grayscale.
@@ -47,26 +47,26 @@ var (
 	borderStyle = lipgloss.NewStyle().Foreground(colBorder)
 )
 
-func statusIcon(status agent.StatusType) string {
+func statusIcon(status insights.StatusType) string {
 	switch status {
-	case agent.StatusWorking:
+	case insights.StatusWorking:
 		return "●"
-	case agent.StatusWait:
+	case insights.StatusWait:
 		return "◐"
-	case agent.StatusIdle:
+	case insights.StatusIdle:
 		return "○"
 	default:
 		return "·"
 	}
 }
 
-func statusStyle(status agent.StatusType) lipgloss.Style {
+func statusStyle(status insights.StatusType) lipgloss.Style {
 	switch status {
-	case agent.StatusWorking:
+	case insights.StatusWorking:
 		return workingStyle
-	case agent.StatusWait:
+	case insights.StatusWait:
 		return waitingStyle
-	case agent.StatusIdle:
+	case insights.StatusIdle:
 		return idleStyle
 	default:
 		return noneStyle
@@ -74,13 +74,13 @@ func statusStyle(status agent.StatusType) lipgloss.Style {
 }
 
 // statusColor returns the bare color for a status, used for accent bars.
-func statusColor(status agent.StatusType) color.Color {
+func statusColor(status insights.StatusType) color.Color {
 	switch status {
-	case agent.StatusWorking:
+	case insights.StatusWorking:
 		return colWarn
-	case agent.StatusWait:
+	case insights.StatusWait:
 		return colInfo
-	case agent.StatusIdle:
+	case insights.StatusIdle:
 		return colSuccess
 	default:
 		return colFaint

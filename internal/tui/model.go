@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/trebaud/mori/internal"
-	"github.com/trebaud/mori/internal/agent"
+	"github.com/trebaud/mori/internal/insights"
 )
 
 // --- Modes and filters ---
@@ -72,16 +72,16 @@ func (f statusFilter) String() string {
 	}
 }
 
-func (f statusFilter) matches(status agent.StatusType) bool {
+func (f statusFilter) matches(status insights.StatusType) bool {
 	switch f {
 	case filterWorking:
-		return status == agent.StatusWorking
+		return status == insights.StatusWorking
 	case filterWaiting:
-		return status == agent.StatusWait
+		return status == insights.StatusWait
 	case filterIdle:
-		return status == agent.StatusIdle
+		return status == insights.StatusIdle
 	case filterNone:
-		return status == agent.StatusNone
+		return status == insights.StatusNone
 	default:
 		return true
 	}
@@ -163,16 +163,20 @@ func newModel(worktrees []internal.Worktree, currentBranch string) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Tick(m.tickInterval(), func(t time.Time) tea.Msg {
+	tick := tea.Tick(m.tickInterval(), func(t time.Time) tea.Msg {
 		return t
 	})
+	if prFetch := fetchAllPRsCmd(m.worktrees); prFetch != nil {
+		return tea.Batch(tick, prFetch)
+	}
+	return tick
 }
 
 // --- State helpers ---
 
 func (m model) hasActiveAgent() bool {
 	for _, wt := range m.worktrees {
-		if wt.Insights.Status == agent.StatusWorking {
+		if wt.Insights.Status == insights.StatusWorking {
 			return true
 		}
 	}
@@ -211,7 +215,7 @@ func (m model) messageInputWidth() int {
 
 func (m *model) refreshInsights() {
 	for i := range m.worktrees {
-		m.worktrees[i].Insights = agent.GetInsights(m.worktrees[i].Path)
+		m.worktrees[i].Insights = insights.GetInsights(m.worktrees[i].Path)
 	}
 	m.tick = time.Now()
 }
@@ -268,13 +272,13 @@ func (m *model) applySort() {
 	})
 }
 
-func statusRank(s agent.StatusType) int {
+func statusRank(s insights.StatusType) int {
 	switch s {
-	case agent.StatusWorking:
+	case insights.StatusWorking:
 		return 0
-	case agent.StatusWait:
+	case insights.StatusWait:
 		return 1
-	case agent.StatusIdle:
+	case insights.StatusIdle:
 		return 2
 	default:
 		return 3
@@ -285,11 +289,11 @@ func statusRank(s agent.StatusType) int {
 func (m model) statusCounts() (w, q, i, n int) {
 	for _, wt := range m.worktrees {
 		switch wt.Insights.Status {
-		case agent.StatusWorking:
+		case insights.StatusWorking:
 			w++
-		case agent.StatusWait:
+		case insights.StatusWait:
 			q++
-		case agent.StatusIdle:
+		case insights.StatusIdle:
 			i++
 		default:
 			n++

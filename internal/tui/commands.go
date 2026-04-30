@@ -15,7 +15,38 @@ import (
 
 	"github.com/trebaud/mori/internal"
 	"github.com/trebaud/mori/internal/git"
+	"github.com/trebaud/mori/internal/github"
 )
+
+// prFetchedMsg is emitted by fetchPRCmd once a gh fetch completes.
+type prFetchedMsg struct {
+	branch string
+	info   *github.PRInfo
+}
+
+func fetchPRCmd(branch string) tea.Cmd {
+	return func() tea.Msg {
+		info, _ := github.Refresh(branch)
+		return prFetchedMsg{branch: branch, info: info}
+	}
+}
+
+func fetchAllPRsCmd(wts []internal.Worktree) tea.Cmd {
+	if !github.IsAvailable() {
+		return nil
+	}
+	var cmds []tea.Cmd
+	for _, wt := range wts {
+		if wt.IsMain || wt.Branch == "" {
+			continue
+		}
+		cmds = append(cmds, fetchPRCmd(wt.Branch))
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
 
 // --- Effects (Elm: Cmd) ---
 

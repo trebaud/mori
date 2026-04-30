@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/trebaud/mori/internal/agent"
 	"github.com/trebaud/mori/internal/git"
+	"github.com/trebaud/mori/internal/github"
+	"github.com/trebaud/mori/internal/insights"
 )
 
 type Worktree struct {
@@ -16,7 +17,8 @@ type Worktree struct {
 	Branch       string
 	RelativePath string
 	IsMain       bool
-	Insights     agent.Insights
+	Insights     insights.Insights
+	PR           *github.PRInfo
 }
 
 // List queries git for all worktrees and enriches them with agent insights.
@@ -40,7 +42,10 @@ func List() ([]Worktree, error) {
 		if wts[i].Path == mainPath {
 			wts[i].IsMain = true
 		}
-		wts[i].Insights = agent.GetInsights(wts[i].Path)
+		wts[i].Insights = insights.GetInsights(wts[i].Path)
+		if !wts[i].IsMain && wts[i].Branch != "" {
+			wts[i].PR = github.Lookup(wts[i].Branch)
+		}
 	}
 
 	return wts, nil
@@ -141,7 +146,7 @@ func FindByBranch(worktrees []Worktree, branch string) *Worktree {
 
 // HasActiveSession returns true if the worktree has a WORKING or WAITING agent session.
 func HasActiveSession(wt Worktree) bool {
-	return wt.Insights.Status == agent.StatusWorking || wt.Insights.Status == agent.StatusWait
+	return wt.Insights.Status == insights.StatusWorking || wt.Insights.Status == insights.StatusWait
 }
 
 // HasUncommittedChanges returns true if the given path has uncommitted git changes.
@@ -152,12 +157,12 @@ func HasUncommittedChanges(path string) bool {
 // FilterByStatus returns worktrees matching the given status string.
 // Valid values: working, idle, waiting, none.
 func FilterByStatus(wts []Worktree, status string) ([]Worktree, error) {
-	target := agent.StatusType(strings.ToUpper(status))
-	valid := map[agent.StatusType]bool{
-		agent.StatusWorking: true,
-		agent.StatusIdle:    true,
-		agent.StatusWait:    true,
-		agent.StatusNone:    true,
+	target := insights.StatusType(strings.ToUpper(status))
+	valid := map[insights.StatusType]bool{
+		insights.StatusWorking: true,
+		insights.StatusIdle:    true,
+		insights.StatusWait:    true,
+		insights.StatusNone:    true,
 	}
 	if !valid[target] {
 		return nil, fmt.Errorf("invalid status '%s'. Valid values: working, idle, waiting, none", status)

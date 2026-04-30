@@ -4,10 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/trebaud/mori/internal"
+	"github.com/trebaud/mori/internal/github"
 )
+
+const prFetchConcurrency = 4
 
 func PrintList(jsonOutput bool, statusFilter string) error {
 	worktrees, err := internal.List()
@@ -23,10 +28,19 @@ func PrintList(jsonOutput bool, statusFilter string) error {
 	}
 
 	if jsonOutput {
+		fetchPRs(worktrees)
 		return printJSON(worktrees)
 	}
 
 	return printTable(worktrees)
+}
+
+type prJSON struct {
+	Number  int    `json:"number"`
+	State   string `json:"state"`
+	IsDraft bool   `json:"is_draft,omitempty"`
+	Title   string `json:"title,omitempty"`
+	URL     string `json:"url,omitempty"`
 }
 
 type worktreeJSON struct {
@@ -39,6 +53,31 @@ type worktreeJSON struct {
 	Task         string  `json:"task,omitempty"`
 	LastActivity string  `json:"last_activity,omitempty"`
 	AheadBehind  string  `json:"ahead_behind,omitempty"`
+	PR           *prJSON `json:"pr,omitempty"`
+}
+
+// fetchPRs populates wt.PR for non-main worktrees in parallel, bounded by
+// prFetchConcurrency. Failures and missing gh degrade silently to wt.PR == nil.
+func fetchPRs(worktrees []internal.Worktree) {
+	if !github.IsAvailable() {
+		return
+	}
+	sem := make(chan struct{}, prFetchConcurrency)
+	var wg sync.WaitGroup
+	for i := range worktrees {
+		if worktrees[i].IsMain || worktrees[i].Branch == "" {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			info, _ := github.Refresh(worktrees[idx].Branch)
+			worktrees[idx].PR = info
+		}(i)
+	}
+	wg.Wait()
 }
 
 func sessionLabel(wt internal.Worktree) string {
@@ -70,6 +109,15 @@ func printJSON(worktrees []internal.Worktree) error {
 		}
 		if wt.Insights.AheadBehind != "" {
 			item.AheadBehind = wt.Insights.AheadBehind
+		}
+		if wt.PR != nil && wt.PR.Number > 0 {
+			item.PR = &prJSON{
+				Number:  wt.PR.Number,
+				State:   strings.ToLower(string(wt.PR.State)),
+				IsDraft: wt.PR.IsDraft,
+				Title:   wt.PR.Title,
+				URL:     wt.PR.URL,
+			}
 		}
 		items = append(items, item)
 	}

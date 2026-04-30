@@ -50,6 +50,7 @@ Mori is a TUI and CLI for managing Git worktrees with built-in Claude Code agent
 | `/` | Search/filter by branch or path |
 | `s` | Cycle sort: default, status, activity, name |
 | `r` | Refresh insights |
+| `p` | Refresh PR status |
 | `?` | Show help |
 | `q` | Quit |
 
@@ -64,6 +65,7 @@ When visible (`i` key or wide terminal), shows per-worktree:
 - Task — last user message (truncated)
 - Git log — 5 most recent commits
 - Branch — ahead/behind vs main
+- Pull request — number, state (open/draft/merged/closed), title, URL (when `gh` is installed)
 
 ## Configuration
 
@@ -117,3 +119,4 @@ Create `.mori.json` in the repo root with `post_create` steps. These run automat
 - The TUI adapts layout to terminal width: list-only (<80), stacked (80-119), side-by-side (120+).
 - Refresh rate is adaptive: 2s when agents are active, 10s when idle.
 - Active sessions (WORKING/WAITING) block deletion unless `--force` is used.
+- PR status uses `gh`; gracefully omitted if `gh` is missing or unauthenticated.

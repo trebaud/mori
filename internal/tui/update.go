@@ -7,7 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/trebaud/mori/internal"
-	"github.com/trebaud/mori/internal/agent"
+	"github.com/trebaud/mori/internal/github"
+	"github.com/trebaud/mori/internal/insights"
 )
 
 // Update is the Elm update function — it takes a message and returns the
@@ -40,7 +41,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = &statusMsg{text: "worktree created", expires: time.Now().Add(statusInfoDuration)}
 			m.refreshWorktreeList()
 		}
-		return m, nil
+		return m, fetchAllPRsCmd(m.worktrees)
 
 	case worktreeRemovedMsg:
 		if msg.err != nil {
@@ -48,6 +49,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = &statusMsg{text: "worktree removed", expires: time.Now().Add(statusInfoDuration)}
 			m.refreshWorktreeList()
+		}
+		return m, fetchAllPRsCmd(m.worktrees)
+
+	case prFetchedMsg:
+		for i := range m.worktrees {
+			if m.worktrees[i].Branch == msg.branch {
+				m.worktrees[i].PR = msg.info
+			}
 		}
 		return m, nil
 
@@ -153,6 +162,14 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		return m, tea.Tick(m.tickInterval(), func(t time.Time) tea.Msg {
 			return t
 		})
+	case "p":
+		if !github.IsAvailable() {
+			m.statusMsg = errorStatus("gh not found in PATH")
+			return m, nil
+		}
+		github.InvalidateAll()
+		m.statusMsg = loadingStatus("refreshing PRs…")
+		return m, fetchAllPRsCmd(m.worktrees)
 	case "?":
 		m.showHelp = !m.showHelp
 	case "/":
@@ -207,7 +224,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			for offset := 1; offset <= len(m.filtered); offset++ {
 				idx := (m.cursor + offset) % len(m.filtered)
 				wt := m.worktrees[m.filtered[idx]]
-				if wt.Insights.Status == agent.StatusWorking || wt.Insights.Status == agent.StatusWait {
+				if wt.Insights.Status == insights.StatusWorking || wt.Insights.Status == insights.StatusWait {
 					m.cursor = idx
 					return m, nil
 				}

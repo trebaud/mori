@@ -1,4 +1,4 @@
-package agent
+package insights
 
 import (
 	"bufio"
@@ -371,4 +371,3 @@ func ModelTier(model string) string {
 	}
 	return "sonnet"
 }
-

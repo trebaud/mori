@@ -7,7 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/trebaud/mori/internal/agent"
+	"github.com/trebaud/mori/internal/insights"
 )
 
 // Layout and refresh timing.
@@ -37,7 +37,7 @@ func insightsPaneWidth(total int) int {
 }
 
 func contextMaxTokens(model string) int {
-	switch agent.ModelTier(model) {
+	switch insights.ModelTier(model) {
 	case "opus":
 		return 1_000_000
 	default:
