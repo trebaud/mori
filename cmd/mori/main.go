@@ -125,7 +125,7 @@ func removeCmd() *cobra.Command {
 func openCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "open <branch>",
-		Short: "Print worktree path for branch",
+		Short: "Open a Claude session in the worktree for branch",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -166,7 +166,7 @@ Usage:
   mori new [branch] [flags]     Create a new worktree
   mori list [flags]             List worktrees
   mori remove <branch> [flags]  Remove a worktree
-  mori open <branch>            Print worktree path for branch
+  mori open <branch>            Open a Claude session in the worktree for branch
   mori status                   Show worktree summary
 
 Flags (new):

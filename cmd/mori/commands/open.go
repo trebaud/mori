@@ -17,6 +17,5 @@ func Open(branch string) error {
 		return fmt.Errorf("no worktree found for branch '%s'", branch)
 	}
 
-	fmt.Println(target.Path)
-	return nil
+	return internal.LaunchClaude(*target)
 }
