@@ -40,7 +40,7 @@ cd mori
 mori                           # Launch the TUI
 mori new                       # Create a new worktree (random branch)
 mori new feat --claude         # Create and launch Claude Code in it
-mori open feat                 # Print worktree path for branch
+mori open feat                 # Open a claude session on this worktree
 mori list                      # List worktrees (table)
 mori list --json               # List with full insights as JSON
 mori list --status working     # Filter by agent status
@@ -55,7 +55,7 @@ mori remove feat --force       # Remove without confirmation
 |---------|-------|-------------|
 | `mori` | | Launch interactive TUI |
 | `mori new [branch]` | | Create a new worktree |
-| `mori open <branch>` | | Print worktree path for branch |
+| `mori open <branch>` | | Open a claude session on this worktree |
 | `mori list` | `ls` | List worktrees non-interactively |
 | `mori status` | | Show worktree summary |
 | `mori remove <branch>` | `rm` | Remove a worktree |
