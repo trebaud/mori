@@ -27,7 +27,7 @@ func createWorktreeCmd(branch string) tea.Cmd {
 			branch = "wt-" + internal.RandomSuffix()
 		}
 
-		result, err := internal.CreateWorktree(repoRoot, branch)
+		result, err := internal.CreateWorktree(repoRoot, branch, nil)
 		if err != nil {
 			return worktreeCreatedMsg{err: err}
 		}

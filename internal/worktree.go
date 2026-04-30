@@ -85,8 +85,9 @@ type CreateResult struct {
 
 // CreateWorktree creates a new git worktree with the given branch name.
 // It checks for commits, creates the worktree from the default branch,
-// and runs post-create hooks.
-func CreateWorktree(repoRoot, branch string) (CreateResult, error) {
+// and runs post-create hooks. If cb is non-nil, progress is reported per step
+// so callers can render live feedback (e.g. a spinner).
+func CreateWorktree(repoRoot, branch string, cb *HookCallbacks) (CreateResult, error) {
 	hasCommits, err := git.HasCommits(repoRoot)
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("failed to check repo: %w", err)
@@ -98,12 +99,20 @@ func CreateWorktree(repoRoot, branch string) (CreateResult, error) {
 	baseBranch := git.DefaultBranch(repoRoot)
 	dir := WorktreeDir(repoRoot, branch)
 
-	if err := git.AddWorktree(repoRoot, dir, branch, baseBranch); err != nil {
-		return CreateResult{}, fmt.Errorf("failed to create worktree: %w", err)
+	branchStep := "Creating branch from " + baseBranch
+	if cb != nil && cb.OnStart != nil {
+		cb.OnStart(branchStep)
+	}
+	addErr := git.AddWorktree(repoRoot, dir, branch, baseBranch)
+	if cb != nil && cb.OnComplete != nil {
+		cb.OnComplete(branchStep, addErr == nil)
+	}
+	if addErr != nil {
+		return CreateResult{}, fmt.Errorf("failed to create worktree: %w", addErr)
 	}
 
 	cfg := Load(repoRoot)
-	hookResults := RunPostCreateHooks(dir, cfg.PostCreate)
+	hookResults := RunPostCreateHooks(dir, cfg.PostCreate, cb)
 
 	return CreateResult{
 		Dir:         dir,

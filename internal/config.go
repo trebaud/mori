@@ -16,3 +16,10 @@ type HookResult struct {
 	Name    string
 	Success bool
 }
+
+// HookCallbacks lets callers observe each step as it starts and completes,
+// so they can render live progress (e.g. a spinner per step).
+type HookCallbacks struct {
+	OnStart    func(name string)
+	OnComplete func(name string, success bool)
+}

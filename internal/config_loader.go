@@ -34,14 +34,23 @@ func Load(repoRoot string) Config {
 
 // RunPostCreateHooks executes each post-create step in the given directory.
 // Returns results for all steps (both successes and failures).
-func RunPostCreateHooks(dir string, steps []Step) []HookResult {
+// If cb is non-nil, OnStart and OnComplete fire around each step so callers
+// can stream progress instead of waiting for the whole batch to finish.
+func RunPostCreateHooks(dir string, steps []Step, cb *HookCallbacks) []HookResult {
 	var results []HookResult
 	for _, step := range steps {
+		if cb != nil && cb.OnStart != nil {
+			cb.OnStart(step.Name)
+		}
 		cmd := exec.Command("sh", "-c", step.Cmd)
 		cmd.Dir = dir
+		success := cmd.Run() == nil
+		if cb != nil && cb.OnComplete != nil {
+			cb.OnComplete(step.Name, success)
+		}
 		results = append(results, HookResult{
 			Name:    step.Name,
-			Success: cmd.Run() == nil,
+			Success: success,
 		})
 	}
 	return results
