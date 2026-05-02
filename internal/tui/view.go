@@ -214,7 +214,9 @@ func (m model) renderFooter(width int) string {
 	if m.showInsights {
 		insightsHint = "[tab] hide"
 	}
-	left := mutedStyle.Render("[?] help  [enter] open  " + insightsHint + "  [n] new  [D] delete  [m] message  [q] quit")
+	// Keep the always-visible footer to ~5 essentials. Delete, message,
+	// archive, and refresh are documented under [?] help.
+	left := mutedStyle.Render("[enter] open  " + insightsHint + "  [n] new  [?] help  [q] quit")
 
 	var indicators []string
 	indicators = append(indicators, mutedStyle.Render("sort ")+textStyle.Render(m.sortMode.String()))
