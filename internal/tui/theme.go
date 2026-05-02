@@ -64,7 +64,10 @@ func init() {
 func ApplyTheme(isDark bool) {
 	ld := lipgloss.LightDark(isDark)
 
-	colRowBg = ld(lipgloss.Color("254"), lipgloss.Color("237"))
+	// 239 (dark) sits ~5 steps above common terminal backgrounds so the
+	// selection reads even on themes that tint bg around 234. 254 (light)
+	// is the symmetric near-bg gray for light terminals.
+	colRowBg = ld(lipgloss.Color("254"), lipgloss.Color("239"))
 	colBorder = ld(lipgloss.Color("250"), lipgloss.Color("238"))
 	colFaint = colBorder
 
