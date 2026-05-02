@@ -109,6 +109,23 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 
+	case "esc":
+		// Back out of any overlay/filter state in priority order so a single
+		// Esc always lands the user closer to the canonical list view.
+		switch {
+		case m.showHelp:
+			m.showHelp = false
+		case m.showInsights:
+			m.showInsights = false
+		case m.statusFilter != filterAll:
+			m.statusFilter = filterAll
+			m.applyFilter()
+		case m.showArchive:
+			m.showArchive = false
+			m.applyFilter()
+		}
+		return m, nil
+
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
