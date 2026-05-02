@@ -142,6 +142,7 @@ type model struct {
 func newModel(worktrees []internal.Worktree, currentBranch string) model {
 	ti := textinput.New()
 	ti.CharLimit = 60
+	ti.Prompt = ""
 
 	filtered := make([]int, len(worktrees))
 	for i := range worktrees {

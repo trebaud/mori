@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/trebaud/mori/internal"
 	"github.com/trebaud/mori/internal/github"
 	"github.com/trebaud/mori/internal/insights"
 )
@@ -182,19 +181,6 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		m.textInput.Placeholder = "branch name (empty for random)"
 		m.textInput.SetValue("")
 		return m, m.textInput.Focus()
-	case "d":
-		if wt := m.selectedWorktree(); wt != nil {
-			switch {
-			case wt.IsMain:
-				m.statusMsg = errorStatus("cannot delete main worktree")
-			case internal.HasActiveSession(*wt):
-				m.statusMsg = errorStatus("worktree has active session — use D to force")
-			default:
-				m.mode = modeConfirmDelete
-				m.deleteTarget = m.cursor
-				m.forceDelete = false
-			}
-		}
 	case "D":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {

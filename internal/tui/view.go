@@ -51,7 +51,7 @@ func (m model) viewListOnly(width int) string {
 	list := m.renderWorktreeList(innerW)
 	framed := renderFrame(list, width, "worktrees")
 
-	footer := m.renderInputLine() + "\n" + m.renderFooter(width-2)
+	footer := m.renderBelowList(width) + m.renderFooter(width-2)
 
 	return "\n" + top + "\n\n" + framed + "\n" + footer + "\n"
 }
@@ -66,7 +66,7 @@ func (m model) viewStacked(width int) string {
 	insights := m.renderInsightsPanel(innerW - 2)
 	insightsFrame := renderFrame(insights, width, "agent insights")
 
-	footer := m.renderInputLine() + "\n" + m.renderFooter(width-2)
+	footer := m.renderBelowList(width) + m.renderFooter(width-2)
 
 	return "\n" + top + "\n\n" + listFrame + "\n" + insightsFrame + "\n" + footer + "\n"
 }
@@ -86,9 +86,19 @@ func (m model) viewSideBySide(width int) string {
 	joined := lipgloss.JoinHorizontal(lipgloss.Top, leftFrame, " ", rightFrame)
 
 	top := m.renderTopBar(width)
-	footer := m.renderInputLine() + "\n" + m.renderFooter(width-2)
+	footer := m.renderBelowList(width) + m.renderFooter(width-2)
 
 	return "\n" + top + "\n\n" + joined + "\n" + footer + "\n"
+}
+
+// renderBelowList chooses what sits between the worktree list and the footer.
+// Create mode gets a dedicated framed prompt; everything else gets the thin
+// inline status/search line.
+func (m model) renderBelowList(width int) string {
+	if m.mode == modeCreate {
+		return "\n" + m.renderCreatePrompt(width) + "\n\n"
+	}
+	return m.renderInputLine() + "\n"
 }
 
 // --- Chrome: top bar, footer, input line, frame ---
@@ -118,8 +128,6 @@ func (m model) renderInputLine() string {
 	switch m.mode {
 	case modeSearch:
 		return " " + titleStyle.Render("/") + " " + m.textInput.View()
-	case modeCreate:
-		return " " + titleStyle.Render("new worktree ›") + " " + m.textInput.View()
 	case modeConfirmDelete:
 		if m.deleteTarget < len(m.filtered) {
 			wt := m.worktrees[m.filtered[m.deleteTarget]]
@@ -141,16 +149,57 @@ func (m model) renderInputLine() string {
 	}
 }
 
+// renderCreatePrompt draws a centered, framed input box for the "new worktree"
+// mode so the prompt has room to breathe and the chrome reads clearly.
+func (m model) renderCreatePrompt(width int) string {
+	cardW := width - 4
+	if cardW > 72 {
+		cardW = 72
+	}
+	if cardW < 32 {
+		cardW = 32
+	}
+
+	prompt := titleStyle.Render("›")
+	inputLine := " " + prompt + "  " + m.textInput.View()
+	hint := " " + dimStyle.Render("branch off ") + mutedStyle.Render(m.currentBranch) +
+		dimStyle.Render("  ·  leave empty for a random name")
+
+	var content strings.Builder
+	content.WriteString("\n")
+	content.WriteString(inputLine)
+	content.WriteString("\n\n")
+	content.WriteString(hint)
+	content.WriteString("\n")
+
+	framed := renderFrame(content.String(), cardW, "new worktree")
+
+	indent := (width - cardW) / 2
+	if indent < 0 {
+		indent = 0
+	}
+	pad := strings.Repeat(" ", indent)
+
+	lines := strings.Split(framed, "\n")
+	for i, ln := range lines {
+		lines[i] = pad + ln
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m model) renderFooter(width int) string {
 	if m.mode == modeSearch {
 		return " " + mutedStyle.Render("[enter] apply  [esc] clear  [↑/↓] navigate")
+	}
+	if m.mode == modeCreate {
+		return " " + mutedStyle.Render("[enter] create  [esc] cancel")
 	}
 
 	insightsHint := "[enter] insights"
 	if m.showInsights {
 		insightsHint = "[enter] hide"
 	}
-	left := mutedStyle.Render("[?] help  [o] open  " + insightsHint + "  [n] new  [d] delete  [m] message  [q] quit")
+	left := mutedStyle.Render("[?] help  [o] open  " + insightsHint + "  [n] new  [D] delete  [m] message  [q] quit")
 
 	var indicators []string
 	indicators = append(indicators, mutedStyle.Render("sort ")+textStyle.Render(m.sortMode.String()))
@@ -636,10 +685,9 @@ func (m model) viewHelp(width int) string {
 		}},
 		{"actions", []struct{ key, desc string }{
 			{"n", "create new worktree"},
-			{"d", "delete worktree"},
-			{"D", "force delete"},
+			{"D", "delete worktree (force)"},
 			{"y", "yank (copy) worktree path"},
-			{"m", "launch agent with prompt (background)"},
+			{"m", "launch agent (claude --dangerously-skip-permissions, background)"},
 			{"r", "refresh insights now"},
 			{"p", "refresh PR status"},
 			{"?", "toggle this help"},
@@ -693,6 +741,7 @@ func (m model) viewMessage(width int) string {
 		} else {
 			target += mutedStyle.Render("  ·  starts new session")
 		}
+		target += mutedStyle.Render("  ·  --dangerously-skip-permissions")
 	}
 
 	inner := m.messageInput.View()
