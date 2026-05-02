@@ -75,9 +75,12 @@ func ApplyTheme(isDark bool) {
 	headingStyle = lipgloss.NewStyle().Foreground(colMuted).Bold(true)
 	selectedStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 
-	workingStyle = lipgloss.NewStyle().Foreground(colWarn).Bold(true)
-	waitingStyle = lipgloss.NewStyle().Foreground(colInfo).Bold(true)
-	idleStyle = lipgloss.NewStyle().Foreground(colSuccess)
+	// Status semantics: working is the desired healthy state (green); waiting
+	// is the one that needs the user's attention, so it gets the warn color;
+	// idle is informational; none is muted.
+	workingStyle = lipgloss.NewStyle().Foreground(colSuccess).Bold(true)
+	waitingStyle = lipgloss.NewStyle().Foreground(colWarn).Bold(true)
+	idleStyle = lipgloss.NewStyle().Foreground(colInfo)
 	noneStyle = lipgloss.NewStyle().Faint(true)
 
 	errorStyle = lipgloss.NewStyle().Foreground(colDanger)
@@ -126,11 +129,11 @@ func statusStyle(status insights.StatusType) lipgloss.Style {
 func statusColor(status insights.StatusType) color.Color {
 	switch status {
 	case insights.StatusWorking:
-		return colWarn
-	case insights.StatusWait:
-		return colInfo
-	case insights.StatusIdle:
 		return colSuccess
+	case insights.StatusWait:
+		return colWarn
+	case insights.StatusIdle:
+		return colInfo
 	default:
 		return colFaint
 	}
