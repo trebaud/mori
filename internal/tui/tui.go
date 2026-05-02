@@ -23,6 +23,7 @@ import (
 // Run launches the TUI. When the user picks a worktree, it hands control to
 // the `claude` CLI in that worktree, then loops back into the TUI when claude exits.
 func Run(worktrees []internal.Worktree) {
+	DetectAndApplyTheme()
 	for {
 		currentBranch := git.CurrentBranch()
 

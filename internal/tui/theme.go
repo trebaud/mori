@@ -2,50 +2,99 @@ package tui
 
 import (
 	"image/color"
+	"os"
 
 	"charm.land/lipgloss/v2"
 
 	"github.com/trebaud/mori/internal/insights"
 )
 
-// Palette — one accent + functional colors; everything else is grayscale.
+// Palette — semantic colors only. We default to ANSI 16 indices so the user's
+// terminal theme controls actual appearance. Layered backgrounds use explicit
+// hex values selected per light/dark detection in ApplyTheme.
 var (
-	colAccent  = lipgloss.Color("205")
-	colSuccess = lipgloss.Color("78")
-	colWarn    = lipgloss.Color("214")
-	colDanger  = lipgloss.Color("203")
-	colInfo    = lipgloss.Color("117")
+	colAccent  color.Color = lipgloss.Color("5") // magenta
+	colSuccess color.Color = lipgloss.Color("2") // green
+	colWarn    color.Color = lipgloss.Color("3") // yellow
+	colDanger  color.Color = lipgloss.Color("1") // red
+	colInfo    color.Color = lipgloss.Color("6") // cyan
 
-	colText   = lipgloss.Color("252")
-	colMuted  = lipgloss.Color("245")
-	colDim    = lipgloss.Color("240")
-	colFaint  = lipgloss.Color("238")
-	colRowBg  = lipgloss.Color("237")
-	colBorder = lipgloss.Color("238")
+	// Text-tone colors. colText leaves the foreground at the terminal default;
+	// colMuted/colDim/colFaint use ANSI 8 so the terminal theme decides the
+	// actual gray. ApplyTheme overrides background/border with adaptive hex
+	// pairs so they're visible on light themes.
+	colText   color.Color = lipgloss.NoColor{}
+	colMuted  color.Color = lipgloss.ANSIColor(8)
+	colDim    color.Color = lipgloss.ANSIColor(8)
+	colFaint  color.Color = lipgloss.ANSIColor(8)
+	colRowBg  color.Color = lipgloss.Color("237")
+	colBorder color.Color = lipgloss.ANSIColor(8)
 )
 
 var (
-	titleStyle    = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
-	textStyle     = lipgloss.NewStyle().Foreground(colText)
-	mutedStyle    = lipgloss.NewStyle().Foreground(colMuted)
-	dimStyle      = lipgloss.NewStyle().Foreground(colDim)
-	headingStyle  = lipgloss.NewStyle().Foreground(colMuted).Bold(true)
+	titleStyle    lipgloss.Style
+	textStyle     lipgloss.Style
+	mutedStyle    lipgloss.Style
+	dimStyle      lipgloss.Style
+	headingStyle  lipgloss.Style
+	selectedStyle lipgloss.Style
+
+	workingStyle lipgloss.Style
+	waitingStyle lipgloss.Style
+	idleStyle    lipgloss.Style
+	noneStyle    lipgloss.Style
+
+	errorStyle   lipgloss.Style
+	successStyle lipgloss.Style
+
+	barHighStyle lipgloss.Style
+	barMedStyle  lipgloss.Style
+	barLowStyle  lipgloss.Style
+
+	borderStyle lipgloss.Style
+)
+
+func init() {
+	ApplyTheme(true)
+}
+
+// ApplyTheme rebuilds the style table for the current terminal background.
+// Call once at startup after detecting whether the terminal is dark or light;
+// the package keeps a sensible dark default until then.
+func ApplyTheme(isDark bool) {
+	ld := lipgloss.LightDark(isDark)
+
+	colRowBg = ld(lipgloss.Color("254"), lipgloss.Color("237"))
+	colBorder = ld(lipgloss.Color("250"), lipgloss.Color("238"))
+	colFaint = colBorder
+
+	titleStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+	textStyle = lipgloss.NewStyle()
+	mutedStyle = lipgloss.NewStyle().Foreground(colMuted)
+	dimStyle = lipgloss.NewStyle().Faint(true)
+	headingStyle = lipgloss.NewStyle().Foreground(colMuted).Bold(true)
 	selectedStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 
 	workingStyle = lipgloss.NewStyle().Foreground(colWarn).Bold(true)
 	waitingStyle = lipgloss.NewStyle().Foreground(colInfo).Bold(true)
-	idleStyle    = lipgloss.NewStyle().Foreground(colSuccess)
-	noneStyle    = lipgloss.NewStyle().Foreground(colDim)
+	idleStyle = lipgloss.NewStyle().Foreground(colSuccess)
+	noneStyle = lipgloss.NewStyle().Faint(true)
 
-	errorStyle   = lipgloss.NewStyle().Foreground(colDanger)
+	errorStyle = lipgloss.NewStyle().Foreground(colDanger)
 	successStyle = lipgloss.NewStyle().Foreground(colSuccess)
 
 	barHighStyle = lipgloss.NewStyle().Foreground(colDanger)
-	barMedStyle  = lipgloss.NewStyle().Foreground(colWarn)
-	barLowStyle  = lipgloss.NewStyle().Foreground(colSuccess)
+	barMedStyle = lipgloss.NewStyle().Foreground(colWarn)
+	barLowStyle = lipgloss.NewStyle().Foreground(colSuccess)
 
 	borderStyle = lipgloss.NewStyle().Foreground(colBorder)
-)
+}
+
+// DetectAndApplyTheme inspects the terminal background once and applies the
+// matching theme. Falls back to dark on any detection error.
+func DetectAndApplyTheme() {
+	ApplyTheme(lipgloss.HasDarkBackground(os.Stdin, os.Stdout))
+}
 
 func statusIcon(status insights.StatusType) string {
 	switch status {
