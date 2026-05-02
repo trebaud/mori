@@ -14,16 +14,6 @@ A TUI for managing git worktrees with Claude Code agent insights.
 
 Running multiple Claude Code agents in parallel means juggling tmux panes, branches, and `git worktree` commands. Mori puts them in one view so you can see what each agent is doing and what it's costing.
 
-## How it compares
-
-|                       | `git worktree` + tmux | Multiple `claude` shells | Mori |
-| --------------------- | --------------------- | ------------------------ | ---- |
-| Side-by-side worktree list | ✗               | ✗                        | ✓    |
-| Agent status (working / waiting / idle) | ✗     | ✗                        | ✓    |
-| Cost & context usage  | ✗                     | per-session              | ✓    |
-| PR state per branch   | ✗                     | ✗                        | ✓    |
-| One key to create / delete / open | ✗         | ✗                        | ✓    |
-
 ## Features
 
 - Browse, create, and delete git worktrees without leaving the TUI
