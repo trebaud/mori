@@ -16,6 +16,8 @@ const (
 	tickSlow         = 10 * time.Second
 	sideByMinWidth   = 120
 	listOnlyMinWidth = 80
+	minViewWidth     = 60
+	minViewHeight    = 12
 )
 
 // Status-message bucket durations.

@@ -25,6 +25,12 @@ func (m model) View() tea.View {
 		totalWidth = 140
 	}
 
+	if m.width > 0 && (m.width < minViewWidth || m.height < minViewHeight) {
+		v := tea.NewView(m.viewTooSmall())
+		v.AltScreen = true
+		return v
+	}
+
 	var v tea.View
 	switch {
 	case m.mode == modeMessage:
@@ -40,6 +46,15 @@ func (m model) View() tea.View {
 	}
 	v.AltScreen = true
 	return v
+}
+
+func (m model) viewTooSmall() string {
+	msg := fmt.Sprintf("terminal too small (%d×%d) — need at least %d×%d", m.width, m.height, minViewWidth, minViewHeight)
+	if m.height < 2 {
+		return msg
+	}
+	pad := (m.height - 1) / 2
+	return strings.Repeat("\n", pad) + " " + mutedStyle.Render(msg)
 }
 
 // --- Top-level layouts ---
