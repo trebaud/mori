@@ -195,11 +195,11 @@ func (m model) renderFooter(width int) string {
 		return " " + mutedStyle.Render("[enter] create  [esc] cancel")
 	}
 
-	insightsHint := "[enter] insights"
+	insightsHint := "[tab] insights"
 	if m.showInsights {
-		insightsHint = "[enter] hide"
+		insightsHint = "[tab] hide"
 	}
-	left := mutedStyle.Render("[?] help  [o] open  " + insightsHint + "  [n] new  [D] delete  [m] message  [q] quit")
+	left := mutedStyle.Render("[?] help  [enter] open  " + insightsHint + "  [n] new  [D] delete  [m] message  [q] quit")
 
 	var indicators []string
 	indicators = append(indicators, mutedStyle.Render("sort ")+textStyle.Render(m.sortMode.String()))
@@ -679,8 +679,9 @@ func (m model) viewHelp(width int) string {
 			{"g / G", "jump to first / last"},
 			{"ctrl+d/u", "half-page down / up"},
 			{"w", "jump to next working/waiting"},
-			{"o", "open claude code in worktree"},
-			{"enter", "toggle insights panel"},
+			{"enter, o", "open claude code in worktree"},
+			{"tab, i", "toggle insights panel"},
+			{"esc", "back out of overlays / filters"},
 			{"q, ctrl+c", "quit"},
 		}},
 		{"actions", []struct{ key, desc string }{

@@ -159,7 +159,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 		}
 
-	case "o":
+	case "o", "enter":
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
 				m.statusMsg = errorStatus("cannot open default branch (--tmux requires --worktree)")
@@ -169,7 +169,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-	case "enter":
+	case "tab", "i":
 		m.showInsights = !m.showInsights
 
 	case "r":
