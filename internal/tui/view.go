@@ -31,19 +31,24 @@ func (m model) View() tea.View {
 		return v
 	}
 
-	var v tea.View
+	var base string
 	switch {
-	case m.mode == modeMessage:
-		v = tea.NewView(m.viewMessage(totalWidth))
 	case m.showHelp:
-		v = tea.NewView(m.viewHelp(totalWidth))
+		base = m.viewHelp(totalWidth)
 	case m.showInsights && totalWidth >= sideByMinWidth:
-		v = tea.NewView(m.viewSideBySide(totalWidth))
+		base = m.viewSideBySide(totalWidth)
 	case m.showInsights && totalWidth >= listOnlyMinWidth:
-		v = tea.NewView(m.viewStacked(totalWidth))
+		base = m.viewStacked(totalWidth)
 	default:
-		v = tea.NewView(m.viewListOnly(totalWidth))
+		base = m.viewListOnly(totalWidth)
 	}
+
+	out := base
+	if m.mode == modeCreate || m.mode == modeMessage {
+		out = m.applyOverlay(base, totalWidth)
+	}
+
+	v := tea.NewView(out)
 	v.AltScreen = true
 	return v
 }
@@ -75,10 +80,23 @@ func (m model) viewStacked(width int) string {
 	innerW := width - 2
 
 	top := m.renderTopBar(width)
-	list := m.renderWorktreeList(innerW)
+
+	// Render the insights panel first to know how tall it is, then give the
+	// list whatever vertical space is left so the footer stays anchored.
+	insights := m.renderInsightsPanel(innerW - 2)
+	insightsH := lipgloss.Height(insights)
+	if insightsH < 1 {
+		insightsH = 1
+	}
+
+	const reserved = 9 // top blank + topbar + blank + 2×(frame top+bottom) + status + footer + spacer
+	listH := m.height - reserved - insightsH
+	if listH < 4 {
+		listH = 4
+	}
+	list := m.renderWorktreeListWithHeight(innerW, listH)
 	listFrame := renderFrame(list, width, "worktrees")
 
-	insights := m.renderInsightsPanel(innerW - 2)
 	insightsFrame := renderFrame(insights, width, "agent insights")
 
 	footer := m.renderBelowList(width) + m.renderFooter(width-2)
@@ -106,13 +124,12 @@ func (m model) viewSideBySide(width int) string {
 	return "\n" + top + "\n\n" + joined + "\n" + footer + "\n"
 }
 
-// renderBelowList chooses what sits between the worktree list and the footer.
-// Create mode gets a dedicated framed prompt; everything else gets the thin
-// inline status/search line.
+// renderBelowList renders the thin inline status/search line that always sits
+// between the list and the footer. It stays one row tall regardless of mode so
+// the footer never shifts; the "new worktree" and "agent prompt" prompts are
+// drawn as floating overlays in applyOverlay instead.
 func (m model) renderBelowList(width int) string {
-	if m.mode == modeCreate {
-		return "\n" + m.renderCreatePrompt(width) + "\n\n"
-	}
+	_ = width
 	return m.renderInputLine() + "\n"
 }
 
@@ -164,9 +181,10 @@ func (m model) renderInputLine() string {
 	}
 }
 
-// renderCreatePrompt draws a centered, framed input box for the "new worktree"
-// mode so the prompt has room to breathe and the chrome reads clearly.
-func (m model) renderCreatePrompt(width int) string {
+// renderCreateCard is the floating "new worktree" card, drawn over the list by
+// applyOverlay. The frame is sized by content; positioning happens in the
+// overlay.
+func (m model) renderCreateCard(width int) string {
 	cardW := width - 4
 	if cardW > 72 {
 		cardW = 72
@@ -179,6 +197,7 @@ func (m model) renderCreatePrompt(width int) string {
 	inputLine := " " + prompt + "  " + m.textInput.View()
 	hint := " " + dimStyle.Render("branch off ") + mutedStyle.Render(m.currentBranch) +
 		dimStyle.Render("  ·  leave empty for a random name")
+	keys := " " + mutedStyle.Render("[enter] create  [esc] cancel")
 
 	var content strings.Builder
 	content.WriteString("\n")
@@ -186,18 +205,111 @@ func (m model) renderCreatePrompt(width int) string {
 	content.WriteString("\n\n")
 	content.WriteString(hint)
 	content.WriteString("\n")
+	content.WriteString(keys)
+	content.WriteString("\n")
 
-	framed := renderFrame(content.String(), cardW, "new worktree")
+	return renderFrame(content.String(), cardW, "new worktree")
+}
 
-	indent := (width - cardW) / 2
-	if indent < 0 {
-		indent = 0
+// renderMessageCard is the floating multi-line "agent prompt" card.
+func (m model) renderMessageCard(width int) string {
+	cardW := width - 4
+	if cardW > 100 {
+		cardW = 100
 	}
-	pad := strings.Repeat(" ", indent)
+	if cardW < 34 {
+		cardW = 34
+	}
 
-	lines := strings.Split(framed, "\n")
+	wt := m.selectedWorktree()
+	var target string
+	if wt != nil {
+		target = mutedStyle.Render("target ") + textStyle.Render(wt.Branch)
+		if wt.Insights.SessionID != "" {
+			target += mutedStyle.Render("  ·  resumes existing session")
+		} else {
+			target += mutedStyle.Render("  ·  starts new session")
+		}
+		target += mutedStyle.Render("  ·  --dangerously-skip-permissions")
+	}
+
+	keys := " " + mutedStyle.Render("[enter] launch  [shift+enter] newline  [ctrl+v] paste  [esc] cancel")
+
+	var content strings.Builder
+	if target != "" {
+		content.WriteString(" " + target + "\n")
+		content.WriteString(dimStyle.Render(strings.Repeat("─", cardW-2)) + "\n")
+	}
+	content.WriteString(m.messageInput.View())
+	content.WriteString("\n")
+	content.WriteString(keys)
+	content.WriteString("\n")
+
+	return renderFrame(content.String(), cardW, "agent prompt")
+}
+
+// applyOverlay composites a floating prompt card on top of the base view,
+// keeping the worktree list visible (and dimmed) underneath. The card is
+// horizontally centered and vertically anchored inside the list area so it
+// never covers the top bar or the footer.
+func (m model) applyOverlay(base string, width int) string {
+	var card string
+	switch m.mode {
+	case modeCreate:
+		card = m.renderCreateCard(width)
+	case modeMessage:
+		card = m.renderMessageCard(width)
+	default:
+		return base
+	}
+
+	cardW := lipgloss.Width(card)
+	cardH := lipgloss.Height(card)
+
+	baseH := lipgloss.Height(base)
+
+	x := (width - cardW) / 2
+	if x < 0 {
+		x = 0
+	}
+
+	// Anchor the card vertically inside the list region: leave the top bar
+	// (rows 0–2) and the bottom chrome (footer + status, ~3 rows) clear.
+	const topReserve = 3
+	const bottomReserve = 3
+	avail := baseH - topReserve - bottomReserve
+	y := topReserve
+	if avail > cardH {
+		y = topReserve + (avail-cardH)/2
+	}
+	if y+cardH > baseH-1 {
+		y = baseH - 1 - cardH
+	}
+	if y < 0 {
+		y = 0
+	}
+
+	dimmed := dimBackground(base)
+	baseLayer := lipgloss.NewLayer(dimmed).Z(0)
+	cardLayer := lipgloss.NewLayer(card).X(x).Y(y).Z(1)
+	return lipgloss.NewCompositor(baseLayer, cardLayer).Render()
+}
+
+// dimBackground softens the base view by re-applying the SGR faint attribute
+// after every reset, so every styled span on every line ends up dimmed. The
+// effect approximates a "blur" behind the floating prompt card.
+func dimBackground(s string) string {
+	const faintOn = "\x1b[2m"
+	const reset = "\x1b[0m"
+	// Re-apply faint after every full reset embedded in styled content, then
+	// frame each line with an outer faint+reset so unstyled segments dim too.
+	s = strings.ReplaceAll(s, reset, reset+faintOn)
+	lines := strings.Split(s, "\n")
 	for i, ln := range lines {
-		lines[i] = pad + ln
+		if ln == "" {
+			continue
+		}
+		lines[i] = faintOn + ln + reset
 	}
 	return strings.Join(lines, "\n")
 }
@@ -205,9 +317,6 @@ func (m model) renderCreatePrompt(width int) string {
 func (m model) renderFooter(width int) string {
 	if m.mode == modeSearch {
 		return " " + mutedStyle.Render("[enter] apply  [esc] clear  [↑/↓] navigate")
-	}
-	if m.mode == modeCreate {
-		return " " + mutedStyle.Render("[enter] create  [esc] cancel")
 	}
 
 	insightsHint := "[tab] insights"
@@ -294,6 +403,14 @@ func colWidths(width int) (branchW, activityW, statusW, contextW, prW int) {
 }
 
 func (m model) renderWorktreeList(width int) string {
+	return m.renderWorktreeListWithHeight(width, m.listInnerHeight())
+}
+
+// renderWorktreeListWithHeight renders the list with a fixed inner height. The
+// header and divider take two lines; the remainder is a viewport that scrolls
+// around the cursor. Empty lines pad to the target height so the surrounding
+// frame doesn't change size as worktrees come and go.
+func (m model) renderWorktreeListWithHeight(width, innerH int) string {
 	var s strings.Builder
 
 	branchW, activityW, statusW, contextW, prW := colWidths(width)
@@ -309,12 +426,41 @@ func (m model) renderWorktreeList(width int) string {
 	s.WriteString(header + "\n")
 	s.WriteString(dimStyle.Render(strings.Repeat("─", width)) + "\n")
 
-	for i, wtIdx := range m.filtered {
-		s.WriteString(m.renderWorktreeRow(i, wtIdx, width, branchW, activityW, statusW, contextW, prW) + "\n")
+	rows := innerH - 2
+	if rows < 1 {
+		rows = 1
 	}
 
 	if len(m.filtered) == 0 {
 		s.WriteString("\n  " + mutedStyle.Render("no matching worktrees") + "\n")
+		// Pad to height so the frame stays a fixed size.
+		written := 1
+		for i := written; i < rows; i++ {
+			s.WriteString("\n")
+		}
+		return s.String()
+	}
+
+	offset := m.scrollOffset
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(m.filtered)-1 {
+		offset = max(0, len(m.filtered)-1)
+	}
+	end := offset + rows
+	if end > len(m.filtered) {
+		end = len(m.filtered)
+	}
+
+	for i := offset; i < end; i++ {
+		s.WriteString(m.renderWorktreeRow(i, m.filtered[i], width, branchW, activityW, statusW, contextW, prW) + "\n")
+	}
+
+	// Pad with blank rows so the frame keeps a fixed height even when there
+	// are fewer worktrees than the viewport can show.
+	for i := end - offset; i < rows; i++ {
+		s.WriteString("\n")
 	}
 
 	return s.String()
@@ -739,55 +885,6 @@ func (m model) viewHelp(width int) string {
 
 	framed := renderFrame(content.String(), w+2, "keybindings")
 	return "\n" + m.renderTopBar(width) + "\n\n" + framed + "\n" + mutedStyle.Render(" [?] close  [q] quit") + "\n"
-}
-
-func (m model) viewMessage(width int) string {
-	cardW := width - 4
-	if cardW > 100 {
-		cardW = 100
-	}
-	if cardW < 34 {
-		cardW = 34
-	}
-
-	wt := m.selectedWorktree()
-	var target string
-	if wt != nil {
-		target = mutedStyle.Render("target ") + textStyle.Render(wt.Branch)
-		if wt.Insights.SessionID != "" {
-			target += mutedStyle.Render("  ·  resumes existing session")
-		} else {
-			target += mutedStyle.Render("  ·  starts new session")
-		}
-		target += mutedStyle.Render("  ·  --dangerously-skip-permissions")
-	}
-
-	inner := m.messageInput.View()
-
-	var content strings.Builder
-	if target != "" {
-		content.WriteString(" " + target + "\n")
-		content.WriteString(dimStyle.Render(strings.Repeat("─", cardW-2)) + "\n")
-	}
-	content.WriteString(inner)
-
-	framed := renderFrame(content.String(), cardW, "agent prompt")
-
-	indent := (width - cardW) / 2
-	if indent < 0 {
-		indent = 0
-	}
-	pad := strings.Repeat(" ", indent)
-
-	framedLines := strings.Split(framed, "\n")
-	for i, ln := range framedLines {
-		framedLines[i] = pad + ln
-	}
-
-	hint := mutedStyle.Render(" [enter] launch  [shift+enter] newline  [ctrl+v] paste  [esc] cancel")
-
-	top := m.renderTopBar(width)
-	return "\n" + top + "\n\n" + strings.Join(framedLines, "\n") + "\n" + hint + "\n"
 }
 
 // newMessageTextarea builds the multi-line prompt editor used by the "m" command.

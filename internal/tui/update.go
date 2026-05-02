@@ -18,6 +18,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.messageInput.SetWidth(m.messageInputWidth())
+		m.adjustScroll()
 		return m, nil
 
 	case time.Time:
@@ -130,16 +131,20 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 		}
+		m.adjustScroll()
 	case "down", "j":
 		if m.cursor < len(m.filtered)-1 {
 			m.cursor++
 		}
+		m.adjustScroll()
 	case "g":
 		m.cursor = 0
+		m.adjustScroll()
 	case "G":
 		if len(m.filtered) > 0 {
 			m.cursor = len(m.filtered) - 1
 		}
+		m.adjustScroll()
 	case "ctrl+d":
 		half := m.height / 4
 		if half < 1 {
@@ -149,6 +154,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		if m.cursor >= len(m.filtered) {
 			m.cursor = max(0, len(m.filtered)-1)
 		}
+		m.adjustScroll()
 	case "ctrl+u":
 		half := m.height / 4
 		if half < 1 {
@@ -158,6 +164,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		if m.cursor < 0 {
 			m.cursor = 0
 		}
+		m.adjustScroll()
 
 	case "o", "enter":
 		if wt := m.selectedWorktree(); wt != nil {
@@ -229,6 +236,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 				wt := m.worktrees[m.filtered[idx]]
 				if wt.Insights.Status == insights.StatusWorking || wt.Insights.Status == insights.StatusWait {
 					m.cursor = idx
+					m.adjustScroll()
 					return m, nil
 				}
 			}
@@ -291,6 +299,7 @@ func (m model) handleSearchKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 		} else if key == "down" && m.cursor < len(m.filtered)-1 {
 			m.cursor++
 		}
+		m.adjustScroll()
 		return m, nil
 	}
 

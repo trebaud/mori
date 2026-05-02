@@ -137,6 +137,8 @@ type model struct {
 
 	archived    map[string]bool
 	showArchive bool
+
+	scrollOffset int
 }
 
 func newModel(worktrees []internal.Worktree, currentBranch string) model {
@@ -214,6 +216,59 @@ func (m model) messageInputWidth() int {
 	return cardW - 4
 }
 
+// listInnerHeight is the fixed inner row count of the worktree-list frame. It
+// stays stable across modes so the footer doesn't move when overlays open. We
+// reserve enough rows for the chrome (top bar, status line, footer) and floor
+// the list at half the screen.
+func (m model) listInnerHeight() int {
+	if m.height <= 0 {
+		return 12
+	}
+	// Reserved rows: top blank + topbar + blank + frame top + frame bottom +
+	// status line + footer + trailing newline = 8.
+	const reserved = 8
+	h := m.height - reserved
+	if minH := m.height / 2; h < minH {
+		h = minH
+	}
+	if h < 4 {
+		h = 4
+	}
+	return h
+}
+
+// listVisibleRows returns the number of worktree rows that fit inside the
+// fixed list frame after the header and divider lines.
+func (m model) listVisibleRows() int {
+	rows := m.listInnerHeight() - 2
+	if rows < 1 {
+		return 1
+	}
+	return rows
+}
+
+// adjustScroll keeps the cursor inside the visible viewport and clamps
+// scrollOffset so we never scroll past the end.
+func (m *model) adjustScroll() {
+	rows := m.listVisibleRows()
+	if m.cursor < m.scrollOffset {
+		m.scrollOffset = m.cursor
+	}
+	if m.cursor >= m.scrollOffset+rows {
+		m.scrollOffset = m.cursor - rows + 1
+	}
+	maxOffset := len(m.filtered) - rows
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
+	}
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
+}
+
 func (m *model) refreshInsights() {
 	for i := range m.worktrees {
 		m.worktrees[i].Insights = insights.GetInsights(m.worktrees[i].Path)
@@ -252,6 +307,7 @@ func (m *model) applyFilter() {
 	if m.cursor >= len(m.filtered) {
 		m.cursor = max(0, len(m.filtered)-1)
 	}
+	m.adjustScroll()
 }
 
 func (m *model) applySort() {
