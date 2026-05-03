@@ -202,7 +202,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		return m, m.textInput.Focus()
 	case "n":
 		m.mode = modeCreate
-		m.textInput.Placeholder = "branch name (empty for random)"
+		m.textInput.Placeholder = ""
 		m.textInput.SetValue("")
 		return m, m.textInput.Focus()
 	case "D":
