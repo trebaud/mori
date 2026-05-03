@@ -24,6 +24,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case time.Time:
 		m.refreshInsights()
 		m.applyFilter()
+		if m.hasActiveAgent() {
+			m.animFrame++
+		}
 		if m.statusMsg != nil && time.Now().After(m.statusMsg.expires) {
 			m.statusMsg = nil
 		}

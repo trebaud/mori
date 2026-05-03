@@ -141,6 +141,8 @@ type model struct {
 
 	scrollOffset int
 	missingTools []string
+
+	animFrame int
 }
 
 func newModel(worktrees []internal.Worktree, currentBranch string) model {
@@ -235,8 +237,8 @@ func (m model) listInnerHeight() int {
 		return 12
 	}
 	// Reserved rows: top blank + topbar + blank + frame top + frame bottom +
-	// status line + footer + trailing newline = 8.
-	const reserved = 8
+	// nyan banner + status line + footer + trailing newline = 9.
+	const reserved = 9
 	h := m.height - reserved
 	if minH := m.height / 2; h < minH {
 		h = minH

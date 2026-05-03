@@ -71,10 +71,11 @@ func (m model) viewListOnly(width int) string {
 	warn := m.renderMissingToolsWarning(width)
 	list := m.renderWorktreeList(innerW)
 	framed := renderFrame(list, width, "worktrees")
+	nyan := m.renderNyanBanner(width)
 
 	footer := m.renderBelowList(width) + m.renderFooter(width-2)
 
-	return "\n" + top + "\n" + warn + "\n" + framed + "\n" + footer + "\n"
+	return "\n" + top + "\n" + warn + "\n" + framed + "\n" + nyan + "\n" + footer + "\n"
 }
 
 func (m model) viewStacked(width int) string {
@@ -91,7 +92,8 @@ func (m model) viewStacked(width int) string {
 		insightsH = 1
 	}
 
-	const reserved = 9 // top blank + topbar + blank + 2×(frame top+bottom) + status + footer + spacer
+	// top blank + topbar + blank + 2×(frame top+bottom) + nyan banner + status + footer + spacer
+	const reserved = 10
 	listH := m.height - reserved - insightsH
 	if listH < 4 {
 		listH = 4
@@ -101,9 +103,10 @@ func (m model) viewStacked(width int) string {
 
 	insightsFrame := renderFrame(insights, width, "agent insights")
 
+	nyan := m.renderNyanBanner(width)
 	footer := m.renderBelowList(width) + m.renderFooter(width-2)
 
-	return "\n" + top + "\n" + warn + "\n" + listFrame + "\n" + insightsFrame + "\n" + footer + "\n"
+	return "\n" + top + "\n" + warn + "\n" + listFrame + "\n" + insightsFrame + "\n" + nyan + "\n" + footer + "\n"
 }
 
 func (m model) viewSideBySide(width int) string {
@@ -122,9 +125,10 @@ func (m model) viewSideBySide(width int) string {
 
 	top := m.renderTopBar(width)
 	warn := m.renderMissingToolsWarning(width)
+	nyan := m.renderNyanBanner(width)
 	footer := m.renderBelowList(width) + m.renderFooter(width-2)
 
-	return "\n" + top + "\n" + warn + "\n" + joined + "\n" + footer + "\n"
+	return "\n" + top + "\n" + warn + "\n" + joined + "\n" + nyan + "\n" + footer + "\n"
 }
 
 func (m model) renderMissingToolsWarning(width int) string {
@@ -133,6 +137,65 @@ func (m model) renderMissingToolsWarning(width int) string {
 	}
 	msg := "⚠  " + strings.Join(m.missingTools, ", ") + " not found in PATH — some features unavailable"
 	return " " + waitingStyle.Render(msg)
+}
+
+// renderNyanBanner is a fixed-height 1-row slot between the frame border and
+// the footer. It always occupies exactly one line so the layout never shifts.
+// When no agent is active it returns a blank line; when working it shows a
+// small cat marching right across a rainbow trail.
+func (m model) renderNyanBanner(width int) string {
+	if width < 8 {
+		return strings.Repeat(" ", width)
+	}
+
+	if !m.hasActiveAgent() {
+		return strings.Repeat(" ", width)
+	}
+
+	// ANSI rainbow: red, yellow, green, cyan, blue, magenta
+	trailColors := []color.Color{
+		lipgloss.Color("1"),
+		lipgloss.Color("3"),
+		lipgloss.Color("2"),
+		lipgloss.Color("6"),
+		lipgloss.Color("4"),
+		lipgloss.Color("5"),
+	}
+	n := len(trailColors)
+
+	// 2-frame walk cycle
+	cats := [2]string{"=^.^=", "=^-^="}
+	cat := cats[m.animFrame%len(cats)]
+	catW := lipgloss.Width(cat)
+
+	maxX := width - catW
+	if maxX < 1 {
+		maxX = 1
+	}
+	catX := (m.animFrame * 4) % (maxX + 1)
+
+	var b strings.Builder
+
+	// Rainbow trail in 4-char color blocks.
+	for block := 0; block*4 < catX; block++ {
+		start := block * 4
+		end := start + 4
+		if end > catX {
+			end = catX
+		}
+		s := lipgloss.NewStyle().Foreground(trailColors[(block+m.animFrame)%n])
+		b.WriteString(s.Render(strings.Repeat("─", end-start)))
+	}
+
+	// Cat
+	b.WriteString(workingStyle.Render(cat))
+
+	// Trailing spaces to fill the reserved row width.
+	if right := width - catX - catW; right > 0 {
+		b.WriteString(strings.Repeat(" ", right))
+	}
+
+	return b.String()
 }
 
 // renderBelowList renders the thin inline status/search line that always sits
