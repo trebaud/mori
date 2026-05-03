@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -139,6 +140,7 @@ type model struct {
 	showArchive bool
 
 	scrollOffset int
+	missingTools []string
 }
 
 func newModel(worktrees []internal.Worktree, currentBranch string) model {
@@ -149,6 +151,13 @@ func newModel(worktrees []internal.Worktree, currentBranch string) model {
 	filtered := make([]int, len(worktrees))
 	for i := range worktrees {
 		filtered[i] = i
+	}
+
+	var missing []string
+	for _, tool := range []string{"claude", "tmux"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			missing = append(missing, tool)
+		}
 	}
 
 	return model{
@@ -162,6 +171,7 @@ func newModel(worktrees []internal.Worktree, currentBranch string) model {
 		mode:          modeNormal,
 		sortMode:      sortDefault,
 		archived:      loadArchived(),
+		missingTools:  missing,
 	}
 }
 

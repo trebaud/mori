@@ -66,19 +66,30 @@ version_gte() {
 
 check_tmux() {
   if ! command -v tmux &>/dev/null; then
-    fail "tmux is not installed. Install it first:
+    warn "tmux is not installed — Claude Code sessions will not work.
     macOS:  brew install tmux
     Linux:  sudo apt install tmux  (or your distro's equivalent)"
+  else
+    ok "tmux: $(tmux -V)"
   fi
-  ok "tmux: $(tmux -V)"
 }
 
 check_claude() {
   if ! command -v claude &>/dev/null; then
-    warn "Claude Code is not installed. Agent insights require it.
+    warn "Claude Code is not installed — agent insights and launching will not work.
     Install: npm install -g @anthropic-ai/claude-code"
   else
     ok "claude: $(claude --version 2>/dev/null || echo 'installed')"
+  fi
+}
+
+check_gh() {
+  if ! command -v gh &>/dev/null; then
+    warn "gh (GitHub CLI) is not installed — PR status features will not work.
+    macOS:  brew install gh
+    Linux:  https://github.com/cli/cli#installation"
+  else
+    ok "gh: $(gh --version | head -1)"
   fi
 }
 
@@ -146,6 +157,7 @@ check_os
 check_git
 check_tmux
 check_claude
+check_gh
 check_go
 echo ""
 

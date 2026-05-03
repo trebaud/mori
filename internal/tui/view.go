@@ -68,18 +68,20 @@ func (m model) viewListOnly(width int) string {
 	innerW := width - 2
 
 	top := m.renderTopBar(width)
+	warn := m.renderMissingToolsWarning(width)
 	list := m.renderWorktreeList(innerW)
 	framed := renderFrame(list, width, "worktrees")
 
 	footer := m.renderBelowList(width) + m.renderFooter(width-2)
 
-	return "\n" + top + "\n\n" + framed + "\n" + footer + "\n"
+	return "\n" + top + "\n" + warn + "\n" + framed + "\n" + footer + "\n"
 }
 
 func (m model) viewStacked(width int) string {
 	innerW := width - 2
 
 	top := m.renderTopBar(width)
+	warn := m.renderMissingToolsWarning(width)
 
 	// Render the insights panel first to know how tall it is, then give the
 	// list whatever vertical space is left so the footer stays anchored.
@@ -101,7 +103,7 @@ func (m model) viewStacked(width int) string {
 
 	footer := m.renderBelowList(width) + m.renderFooter(width-2)
 
-	return "\n" + top + "\n\n" + listFrame + "\n" + insightsFrame + "\n" + footer + "\n"
+	return "\n" + top + "\n" + warn + "\n" + listFrame + "\n" + insightsFrame + "\n" + footer + "\n"
 }
 
 func (m model) viewSideBySide(width int) string {
@@ -119,9 +121,18 @@ func (m model) viewSideBySide(width int) string {
 	joined := lipgloss.JoinHorizontal(lipgloss.Top, leftFrame, " ", rightFrame)
 
 	top := m.renderTopBar(width)
+	warn := m.renderMissingToolsWarning(width)
 	footer := m.renderBelowList(width) + m.renderFooter(width-2)
 
-	return "\n" + top + "\n\n" + joined + "\n" + footer + "\n"
+	return "\n" + top + "\n" + warn + "\n" + joined + "\n" + footer + "\n"
+}
+
+func (m model) renderMissingToolsWarning(width int) string {
+	if len(m.missingTools) == 0 {
+		return ""
+	}
+	msg := "⚠  " + strings.Join(m.missingTools, ", ") + " not found in PATH — some features unavailable"
+	return " " + waitingStyle.Render(msg)
 }
 
 // renderBelowList renders the thin inline status/search line that always sits
