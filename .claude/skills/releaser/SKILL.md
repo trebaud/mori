@@ -1,5 +1,5 @@
 ---
-name: release
+name: releaser
 description: >
   Create a new mori release: build cross-platform artifacts with scripts/releaser.sh,
   generate a changelog since the previous tag, and publish a GitHub release via gh.
