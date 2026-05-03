@@ -58,13 +58,13 @@ Always prefix with `v` (e.g. `v1.2.3`).
 
 Present the inferred bump level, the reasoning, and the resolved version to the user, then ask for confirmation before proceeding.
 
-### 2. Build release artifacts
+### 2. Build release artifacts and tag
 
 ```bash
 bash scripts/releaser.sh <VERSION>
 ```
 
-This produces `./dist/*.tar.gz` and `./dist/*.sha256` for all supported platforms. Fail loudly if the script exits non-zero.
+This produces `./dist/*.tar.gz` and `./dist/*.sha256` for all supported platforms, then creates and pushes the git tag `<VERSION>`. Fail loudly if the script exits non-zero.
 
 ### 3. Generate changelog
 
@@ -78,17 +78,26 @@ Then collect commits between the previous tag and HEAD:
 git log <PREV_TAG>..HEAD --oneline --no-merges
 ```
 
+Filter and rewrite the commits into concise, user-facing release notes:
+
+- **Include only** changes that affect end users: new features, bug fixes, UX improvements, performance gains visible to users.
+- **Exclude** anything that is purely internal: CI/CD, devops, documentation, refactoring, dependency bumps, test changes, chores.
+- Prefix each entry with a short type label: `feature:`, `bug:`, `perf:`, `ux:`.
+- Keep each entry to one short sentence. Do not copy the raw commit message verbatim — rephrase it to describe what the user experiences.
+
 Format the notes as:
 
 ```
 ## What's Changed
 
-- <commit message>
-- <commit message>
+- feature: <what the user can now do>
+- bug: <what was broken and is now fixed>
 ...
 
 **Full changelog**: https://github.com/trebaud/mori/compare/<PREV_TAG>...<NEW_VERSION>
 ```
+
+If no commits pass the user-facing filter, write "No user-facing changes in this release."
 
 ### 4. Create the GitHub release
 

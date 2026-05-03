@@ -54,3 +54,8 @@ popd > /dev/null
 
 echo "Done. Artifacts in $BUILD_DIR:"
 ls -1 "$BUILD_DIR"
+
+echo "Creating and pushing git tag $VERSION..."
+git tag "$VERSION"
+git push origin "$VERSION"
+echo "Tagged $VERSION"
