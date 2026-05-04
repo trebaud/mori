@@ -22,9 +22,25 @@ const (
 	modeNormal inputMode = iota
 	modeSearch
 	modeCreate
+	modeCreating
 	modeConfirmDelete
 	modeMessage
 )
+
+type stepState int
+
+const (
+	stepPending stepState = iota
+	stepRunning
+	stepSucceeded
+	stepFailed
+)
+
+type creatingStep struct {
+	name  string
+	cmd   string
+	state stepState
+}
 
 type sortMode int
 
@@ -143,6 +159,10 @@ type model struct {
 	missingTools []string
 
 	animFrame int
+
+	creatingBranch string
+	creatingSteps  []creatingStep
+	creatingChan   chan tea.Msg
 }
 
 func newModel(worktrees []internal.Worktree, currentBranch string) model {

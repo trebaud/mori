@@ -44,7 +44,7 @@ func (m model) View() tea.View {
 	}
 
 	out := base
-	if m.mode == modeCreate || m.mode == modeMessage {
+	if m.mode == modeCreate || m.mode == modeMessage || m.mode == modeCreating {
 		out = m.applyOverlay(base, totalWidth)
 	}
 
@@ -285,6 +285,67 @@ func (m model) renderCreateCard(width int) string {
 	return renderFrame(content.String(), cardW, "new worktree")
 }
 
+// spinnerFrames are braille dots used to animate steps in progress.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// renderCreatingCard is the floating progress card shown while a worktree is
+// being created. It lists each setup step with its command and a live state
+// glyph (spinner, check, cross, or pending dot).
+func (m model) renderCreatingCard(width int) string {
+	cardW := width - 4
+	if cardW > 96 {
+		cardW = 96
+	}
+	if cardW < 40 {
+		cardW = 40
+	}
+
+	innerW := cardW - 2
+	cmdW := innerW - 4
+	if cmdW < 8 {
+		cmdW = 8
+	}
+
+	header := " " + mutedStyle.Render("creating ") + textStyle.Render(m.creatingBranch)
+
+	var content strings.Builder
+	content.WriteString("\n")
+	content.WriteString(header)
+	content.WriteString("\n\n")
+
+	spin := spinnerFrames[m.animFrame%len(spinnerFrames)]
+
+	for _, step := range m.creatingSteps {
+		var glyph string
+		var nameStyle lipgloss.Style
+		switch step.state {
+		case stepRunning:
+			glyph = workingStyle.Render(spin)
+			nameStyle = textStyle.Bold(true)
+		case stepSucceeded:
+			glyph = successStyle.Render("✓")
+			nameStyle = mutedStyle
+		case stepFailed:
+			glyph = errorStyle.Render("✗")
+			nameStyle = errorStyle
+		default:
+			glyph = mutedStyle.Render("○")
+			nameStyle = mutedStyle
+		}
+
+		content.WriteString(" " + glyph + " " + nameStyle.Render(step.name) + "\n")
+		cmdLine := step.cmd
+		if lipgloss.Width(cmdLine) > cmdW {
+			cmdLine = cmdLine[:cmdW-1] + "…"
+		}
+		content.WriteString("   " + dimStyle.Render(cmdLine) + "\n")
+	}
+
+	content.WriteString("\n")
+
+	return renderFrame(content.String(), cardW, "new worktree")
+}
+
 // renderMessageCard is the floating multi-line "agent prompt" card.
 func (m model) renderMessageCard(width int) string {
 	cardW := width - 4
@@ -331,6 +392,8 @@ func (m model) applyOverlay(base string, width int) string {
 	switch m.mode {
 	case modeCreate:
 		card = m.renderCreateCard(width)
+	case modeCreating:
+		card = m.renderCreatingCard(width)
 	case modeMessage:
 		card = m.renderMessageCard(width)
 	default:

@@ -50,17 +50,56 @@ func fetchAllPRsCmd(wts []internal.Worktree) tea.Cmd {
 
 // --- Effects (Elm: Cmd) ---
 
-// createWorktreeCmd creates a worktree in the background and emits worktreeCreatedMsg.
-func createWorktreeCmd(branch string) tea.Cmd {
-	return func() tea.Msg {
+// stepStartedMsg fires when a creation step begins running.
+type stepStartedMsg struct{ name string }
+
+// stepCompletedMsg fires when a creation step finishes (success or failure).
+type stepCompletedMsg struct {
+	name    string
+	success bool
+}
+
+// spinnerTickMsg drives the spinner animation while the creating overlay is open.
+type spinnerTickMsg struct{}
+
+// planCreateSteps returns the list of steps that CreateWorktree will perform,
+// pre-populated so the overlay can show the full plan up front.
+func planCreateSteps(repoRoot, branch string) []creatingStep {
+	baseBranch := git.DefaultBranch(repoRoot)
+	dir := internal.WorktreeDir(repoRoot, branch)
+	relDir := strings.TrimPrefix(dir, repoRoot+"/")
+
+	steps := []creatingStep{{
+		name:  "Creating branch from " + baseBranch,
+		cmd:   fmt.Sprintf("git worktree add %s -b %s %s", relDir, branch, baseBranch),
+		state: stepPending,
+	}}
+
+	cfg := internal.Load(repoRoot)
+	for _, st := range cfg.PostCreate {
+		steps = append(steps, creatingStep{name: st.Name, cmd: st.Cmd, state: stepPending})
+	}
+	return steps
+}
+
+// startCreateWorktreeCmd kicks off worktree creation in a goroutine, streaming
+// per-step progress over a channel. The returned channel is read one message at
+// a time by waitStepCmd; the returned tea.Cmd reads the first message.
+func startCreateWorktreeCmd(branch string) (chan tea.Msg, tea.Cmd) {
+	ch := make(chan tea.Msg, 64)
+	go func() {
+		defer close(ch)
 		repoRoot := findRepoRoot()
-		if branch == "" {
-			branch = "wt-" + internal.RandomSuffix()
+
+		cb := &internal.HookCallbacks{
+			OnStart:    func(name string) { ch <- stepStartedMsg{name: name} },
+			OnComplete: func(name string, success bool) { ch <- stepCompletedMsg{name: name, success: success} },
 		}
 
-		result, err := internal.CreateWorktree(repoRoot, branch, nil)
+		result, err := internal.CreateWorktree(repoRoot, branch, cb)
 		if err != nil {
-			return worktreeCreatedMsg{err: err}
+			ch <- worktreeCreatedMsg{err: err}
+			return
 		}
 
 		var warnings []string
@@ -69,8 +108,31 @@ func createWorktreeCmd(branch string) tea.Cmd {
 				warnings = append(warnings, hr.Name)
 			}
 		}
-		return worktreeCreatedMsg{warnings: warnings}
+		ch <- worktreeCreatedMsg{warnings: warnings}
+	}()
+	return ch, waitStepCmd(ch)
+}
+
+// waitStepCmd reads one message from the streaming channel. The Update function
+// re-issues this cmd after each message until the channel is closed.
+func waitStepCmd(ch chan tea.Msg) tea.Cmd {
+	if ch == nil {
+		return nil
 	}
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
+
+// spinnerTickCmd schedules the next spinner frame.
+func spinnerTickCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg {
+		return spinnerTickMsg{}
+	})
 }
 
 // removeWorktreeCmd removes a worktree and emits worktreeRemovedMsg.

@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/trebaud/mori/internal"
 	"github.com/trebaud/mori/internal/github"
 	"github.com/trebaud/mori/internal/insights"
 )
@@ -34,7 +35,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return t
 		})
 
+	case stepStartedMsg:
+		for i := range m.creatingSteps {
+			if m.creatingSteps[i].name == msg.name && m.creatingSteps[i].state == stepPending {
+				m.creatingSteps[i].state = stepRunning
+				break
+			}
+		}
+		return m, waitStepCmd(m.creatingChan)
+
+	case stepCompletedMsg:
+		for i := range m.creatingSteps {
+			if m.creatingSteps[i].name == msg.name && m.creatingSteps[i].state == stepRunning {
+				if msg.success {
+					m.creatingSteps[i].state = stepSucceeded
+				} else {
+					m.creatingSteps[i].state = stepFailed
+				}
+				break
+			}
+		}
+		return m, waitStepCmd(m.creatingChan)
+
+	case spinnerTickMsg:
+		if m.mode == modeCreating {
+			m.animFrame++
+			return m, spinnerTickCmd()
+		}
+		return m, nil
+
 	case worktreeCreatedMsg:
+		m.mode = modeNormal
+		m.creatingChan = nil
+		m.creatingSteps = nil
+		m.creatingBranch = ""
 		if msg.err != nil {
 			m.statusMsg = &statusMsg{text: "create failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(statusErrorDuration)}
 		} else if len(msg.warnings) > 0 {
@@ -99,6 +133,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleSearchKey(msg, key)
 	case modeCreate:
 		return m.handleCreateKey(msg, key)
+	case modeCreating:
+		return m.handleCreatingKey(key)
 	case modeConfirmDelete:
 		return m.handleDeleteKey(key)
 	case modeMessage:
@@ -322,15 +358,28 @@ func (m model) handleCreateKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 		return m, nil
 	case "enter":
 		branch := strings.TrimSpace(m.textInput.Value())
-		m.mode = modeNormal
+		if branch == "" {
+			branch = "wt-" + internal.RandomSuffix()
+		}
 		m.textInput.Blur()
-		m.statusMsg = loadingStatus("creating worktree…")
-		return m, createWorktreeCmd(branch)
+		m.mode = modeCreating
+		m.creatingBranch = branch
+		m.creatingSteps = planCreateSteps(findRepoRoot(), branch)
+		ch, stepCmd := startCreateWorktreeCmd(branch)
+		m.creatingChan = ch
+		return m, tea.Batch(stepCmd, spinnerTickCmd())
 	}
 
 	var cmd tea.Cmd
 	m.textInput, cmd = m.textInput.Update(msg)
 	return m, cmd
+}
+
+func (m model) handleCreatingKey(key string) (tea.Model, tea.Cmd) {
+	if key == "ctrl+c" {
+		return m, tea.Quit
+	}
+	return m, nil
 }
 
 func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
