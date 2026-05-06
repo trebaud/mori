@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/trebaud/mori/internal"
+	"github.com/trebaud/mori/internal/bg"
 	"github.com/trebaud/mori/internal/insights"
 )
 
@@ -123,8 +124,8 @@ type worktreeRemovedMsg struct {
 }
 
 type messageSentMsg struct {
-	err     error
-	logPath string
+	err  error
+	bgID string
 }
 
 // --- Model (Elm: Model) ---
@@ -155,10 +156,14 @@ type model struct {
 	archived    map[string]bool
 	showArchive bool
 
-	scrollOffset int
-	missingTools []string
+	scrollOffset        int
+	insightsScrollOffset int
+	missingTools        []string
 
 	animFrame int
+
+	agentLaunchedAt time.Time              // non-zero while we want fast ticks after a launch
+	bgSessions      map[string]*bg.Session // worktree path → most relevant claude --bg session (refreshed per tick)
 
 	creatingBranch string
 	creatingSteps  []creatingStep
@@ -176,10 +181,8 @@ func newModel(worktrees []internal.Worktree, currentBranch string) model {
 	}
 
 	var missing []string
-	for _, tool := range []string{"claude", "tmux"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			missing = append(missing, tool)
-		}
+	if _, err := exec.LookPath("claude"); err != nil {
+		missing = append(missing, "claude")
 	}
 
 	return model{
@@ -214,15 +217,58 @@ func (m model) hasActiveAgent() bool {
 		if wt.Insights.Status == insights.StatusWorking {
 			return true
 		}
+		if s := m.bgSessions[wt.Path]; s != nil && s.Working() {
+			return true
+		}
 	}
 	return false
+}
+
+// bgSession returns the claude --bg session attached to the worktree at path,
+// or nil. Nil-safe so callers can chain it.
+func (m model) bgSession(path string) *bg.Session {
+	if m.bgSessions == nil {
+		return nil
+	}
+	return m.bgSessions[path]
+}
+
+// refreshBgSessions scans ~/.claude/jobs/ once per tick and rebuilds the
+// worktree-path → session map used for the working/wait/idle overlay, the
+// peek panel, and the attach-on-open flow.
+func (m *model) refreshBgSessions() {
+	paths := make([]string, 0, len(m.worktrees))
+	for _, wt := range m.worktrees {
+		paths = append(paths, wt.Path)
+	}
+	m.bgSessions = bg.ByCwd(paths)
 }
 
 func (m model) tickInterval() time.Duration {
 	if m.hasActiveAgent() {
 		return tickFast
 	}
+	// Stay fast within 60s of launching an agent so the status pill updates
+	// promptly even before insights detect WORKING.
+	if !m.agentLaunchedAt.IsZero() && time.Since(m.agentLaunchedAt) < 60*time.Second {
+		return tickFast
+	}
 	return tickSlow
+}
+
+// effectiveStatus returns the display status for a worktree. Live bg sessions
+// take precedence over the insights-derived status because the supervisor's
+// state machine is more authoritative than what we can derive from JSONL.
+func (m model) effectiveStatus(wt internal.Worktree) insights.StatusType {
+	if s := m.bgSession(wt.Path); s != nil && s.Live() {
+		switch {
+		case s.NeedsInput():
+			return insights.StatusWait
+		case s.Working():
+			return insights.StatusWorking
+		}
+	}
+	return wt.Insights.Status
 }
 
 func (m model) selectedWorktree() *internal.Worktree {

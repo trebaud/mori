@@ -20,11 +20,21 @@ const (
 	StatusNone    StatusType = "NONE"
 )
 
+// TodoItem is one entry from a TodoWrite tool call.
+type TodoItem struct {
+	Content    string
+	ActiveForm string
+	Status     string // "pending" | "in_progress" | "completed"
+}
+
 type Insights struct {
 	Status        StatusType
 	LastActivity  time.Time
 	SessionSize   int64
 	CurrentTask   string
+	SessionTitle  string // AI-generated title from ai-title records
+	LastPrompt    string // Most recent user prompt from last-prompt records
+	Todos         []TodoItem
 	SessionID     string
 	Slug          string
 	Model         string
@@ -142,6 +152,9 @@ func buildInsights(worktreePath, file string, modTime time.Time, headRef string)
 		LastActivity:  modTime,
 		SessionSize:   fileSize(file),
 		CurrentTask:   parsed.task,
+		SessionTitle:  parsed.sessionTitle,
+		LastPrompt:    parsed.lastPrompt,
+		Todos:         parsed.todos,
 		SessionID:     strings.TrimSuffix(filepath.Base(file), ".jsonl"),
 		Slug:          parsed.slug,
 		Model:         parsed.model,
@@ -161,6 +174,9 @@ func buildInsights(worktreePath, file string, modTime time.Time, headRef string)
 type sessionData struct {
 	status        StatusType
 	task          string
+	sessionTitle  string
+	lastPrompt    string
+	todos         []TodoItem
 	slug          string
 	model         string
 	mode          string
@@ -200,15 +216,17 @@ func scanSession(path string) sessionData {
 
 func scanFromReader(scanner *bufio.Scanner) sessionData {
 	var result sessionData
-	var lastType string
-	var lastLine string
+	var lastConvType string // only "user" or "assistant" — metadata entries don't affect status
+	var lastAssistantLine string
 	var lastUserTask string
 
 	var entry struct {
-		Type    string `json:"type"`
-		Subtype string `json:"subtype"`
-		Slug    string `json:"slug"`
-		Message struct {
+		Type       string `json:"type"`
+		Subtype    string `json:"subtype"`
+		Slug       string `json:"slug"`
+		AiTitle    string `json:"aiTitle"`
+		LastPrompt string `json:"lastPrompt"`
+		Message    struct {
 			Model   string          `json:"model"`
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
@@ -225,37 +243,54 @@ func scanFromReader(scanner *bufio.Scanner) sessionData {
 	}
 
 	for scanner.Scan() {
-		lastLine = scanner.Text()
-		if err := json.Unmarshal([]byte(lastLine), &entry); err != nil {
+		line := scanner.Text()
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
-
-		lastType = entry.Type
 
 		if entry.Slug != "" {
 			result.slug = entry.Slug
 		}
 
 		switch entry.Type {
+		case "ai-title":
+			if entry.AiTitle != "" {
+				result.sessionTitle = entry.AiTitle
+			}
+		case "last-prompt":
+			if entry.LastPrompt != "" {
+				result.lastPrompt = entry.LastPrompt
+			}
 		case "permission-mode":
 			if entry.PermissionMode != "" {
 				result.mode = entry.PermissionMode
 			}
 		case "user":
+			lastConvType = "user"
 			if entry.PermissionMode != "" {
 				result.mode = entry.PermissionMode
 			}
 			ci := parseContent(entry.Message.Content)
 			if ci.text != "" {
 				lastUserTask = ci.text
+				// User messages land in the JSONL immediately; the matching
+				// `last-prompt` metadata record is only written at end-of-turn.
+				// Use the user message so the prompt panel updates right away.
+				result.lastPrompt = ci.text
 			}
 		case "assistant":
+			lastConvType = "assistant"
+			lastAssistantLine = line
 			if entry.Message.Model != "" {
 				result.model = entry.Message.Model
 			}
 			ci := parseContent(entry.Message.Content)
 			result.lastTool = ci.toolName
 			result.hasError = ci.hasError
+
+			if todos := parseTodos(entry.Message.Content); todos != nil {
+				result.todos = todos
+			}
 
 			if entry.Message.Usage.InputTokens > 0 {
 				result.inputTokens = entry.Message.Usage.InputTokens +
@@ -285,11 +320,14 @@ func scanFromReader(scanner *bufio.Scanner) sessionData {
 		}
 	}
 
-	switch lastType {
+	// Derive status from the last conversation turn (user/assistant only).
+	// Metadata entries like ai-title, last-prompt, attachment, queue-operation
+	// are written around conversation entries and must not override the status.
+	switch lastConvType {
 	case "user":
 		result.status = StatusWorking
 	case "assistant":
-		if strings.Contains(lastLine, "AskUserQuestion") {
+		if strings.Contains(lastAssistantLine, "AskUserQuestion") {
 			result.status = StatusWait
 		} else {
 			result.status = StatusIdle
@@ -345,6 +383,44 @@ func parseContent(raw json.RawMessage) contentInfo {
 		}
 	}
 	return info
+}
+
+// parseTodos extracts the todo list from the last TodoWrite tool_use block in
+// an assistant message's content. Returns nil if no TodoWrite is found.
+func parseTodos(raw json.RawMessage) []TodoItem {
+	var blocks []struct {
+		Type  string          `json:"type"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil
+	}
+	var result []TodoItem
+	for _, b := range blocks {
+		if b.Type != "tool_use" || b.Name != "TodoWrite" {
+			continue
+		}
+		var input struct {
+			Todos []struct {
+				Content    string `json:"content"`
+				ActiveForm string `json:"activeForm"`
+				Status     string `json:"status"`
+			} `json:"todos"`
+		}
+		if json.Unmarshal(b.Input, &input) != nil {
+			continue
+		}
+		result = make([]TodoItem, len(input.Todos))
+		for i, t := range input.Todos {
+			result[i] = TodoItem{
+				Content:    t.Content,
+				ActiveForm: t.ActiveForm,
+				Status:     t.Status,
+			}
+		}
+	}
+	return result
 }
 
 type modelPricing struct {

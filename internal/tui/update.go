@@ -23,6 +23,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case time.Time:
+		m.refreshBgSessions()
 		m.refreshInsights()
 		m.applyFilter()
 		if m.hasActiveAgent() {
@@ -100,14 +101,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messageSentMsg:
 		if msg.err != nil {
 			m.statusMsg = &statusMsg{text: "launch failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(statusErrorDuration)}
-		} else {
-			text := "agent launched"
-			if msg.logPath != "" {
-				text = "agent launched — log: " + msg.logPath
-			}
-			m.statusMsg = &statusMsg{text: text, expires: time.Now().Add(statusInfoDuration)}
+			return m, nil
 		}
-		return m, nil
+		text := "agent dispatched"
+		if msg.bgID != "" {
+			text = "bg " + msg.bgID + " · [enter] attach  (ctrl+z to detach without stopping)"
+		}
+		m.statusMsg = &statusMsg{text: text, expires: time.Now().Add(statusInfoDuration)}
+		m.agentLaunchedAt = time.Now()
+		// Kick an immediate fast tick so insights and log update right away.
+		return m, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return t })
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -169,13 +172,24 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
+			m.insightsScrollOffset = 0
 		}
 		m.adjustScroll()
 	case "down", "j":
 		if m.cursor < len(m.filtered)-1 {
 			m.cursor++
+			m.insightsScrollOffset = 0
 		}
 		m.adjustScroll()
+
+	case "[":
+		if m.showInsights && m.insightsScrollOffset > 0 {
+			m.insightsScrollOffset--
+		}
+	case "]":
+		if m.showInsights {
+			m.insightsScrollOffset++
+		}
 	case "g":
 		m.cursor = 0
 		m.adjustScroll()
@@ -211,12 +225,16 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 				m.statusMsg = errorStatus("cannot open default branch (--tmux requires --worktree)")
 				return m, nil
 			}
+			// Quit the TUI either way; main.go decides between LaunchClaude
+			// (fresh interactive) and AttachBg (attach to live --bg session)
+			// based on whether a session exists for this worktree.
 			m.selected = m.filtered[m.cursor]
 			return m, tea.Quit
 		}
 
 	case "tab", "i":
 		m.showInsights = !m.showInsights
+		m.insightsScrollOffset = 0
 
 	case "r":
 		m.refreshInsights()

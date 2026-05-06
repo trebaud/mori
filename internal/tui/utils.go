@@ -12,12 +12,17 @@ import (
 
 // Layout and refresh timing.
 const (
-	tickFast         = 2 * time.Second
-	tickSlow         = 10 * time.Second
-	sideByMinWidth   = 120
-	listOnlyMinWidth = 80
-	minViewWidth     = 60
-	minViewHeight    = 12
+	tickFast      = 2 * time.Second
+	tickSlow      = 10 * time.Second
+	minViewWidth  = 60
+	minViewHeight = 12
+	splitMinWidth = 120 // minimum terminal width for the split list+insights layout
+)
+
+// Insights floating window dimensions (outer frame including border).
+const (
+	insightsFloatW = 76
+	insightsFloatH = 32
 )
 
 // Status-message bucket durations.
@@ -26,17 +31,6 @@ const (
 	statusErrorDuration = 4 * time.Second
 	statusLoadingMax    = 30 * time.Second
 )
-
-func insightsPaneWidth(total int) int {
-	w := total / 3
-	if w < 44 {
-		w = 44
-	}
-	if w > 70 {
-		w = 70
-	}
-	return w
-}
 
 func contextMaxTokens(model string) int {
 	switch insights.ModelTier(model) {
@@ -115,22 +109,4 @@ func padBetween(left, right string, width int) string {
 		gap = 1
 	}
 	return " " + left + strings.Repeat(" ", gap) + right + " "
-}
-
-// padToSameHeight appends blank lines to the shorter string so both have equal line count.
-func padToSameHeight(a, b string) (string, string) {
-	la := strings.Count(a, "\n")
-	lb := strings.Count(b, "\n")
-	if !strings.HasSuffix(a, "\n") {
-		la++
-	}
-	if !strings.HasSuffix(b, "\n") {
-		lb++
-	}
-	if la < lb {
-		a += strings.Repeat("\n", lb-la)
-	} else if lb < la {
-		b += strings.Repeat("\n", la-lb)
-	}
-	return a, b
 }

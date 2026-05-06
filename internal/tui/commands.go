@@ -4,16 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/trebaud/mori/internal"
+	"github.com/trebaud/mori/internal/bg"
 	"github.com/trebaud/mori/internal/git"
 	"github.com/trebaud/mori/internal/github"
 )
@@ -145,46 +144,18 @@ func removeWorktreeCmd(path string, force bool) tea.Cmd {
 	}
 }
 
-// launchAgentCmd starts a detached claude agent in the worktree and emits messageSentMsg.
+// launchAgentCmd dispatches a new Claude Code background session in the
+// worktree via `claude --bg`. The session is hosted by Claude's supervisor
+// process — once dispatched it survives mori restarts and we drive everything
+// (status, peek, attach) through ~/.claude/jobs/<id>/state.json and the
+// claude logs/attach subcommands.
 func launchAgentCmd(wt internal.Worktree, text string) tea.Cmd {
 	return func() tea.Msg {
-		claudePath, err := exec.LookPath("claude")
+		id, err := bg.Launch("", wt.Path, text, "--dangerously-skip-permissions")
 		if err != nil {
-			return messageSentMsg{err: fmt.Errorf("claude not found in PATH")}
-		}
-
-		var args []string
-		if wt.Insights.SessionID != "" {
-			args = append(args, "--resume", wt.Insights.SessionID)
-		}
-		args = append(args, "--dangerously-skip-permissions", "-p", text)
-
-		cmd := exec.Command(claudePath, args...)
-		cmd.Dir = wt.Path
-
-		logPath := filepath.Join(os.TempDir(), fmt.Sprintf("mori-agent-%s-%d.log", filepath.Base(wt.Path), time.Now().Unix()))
-		logFile, logErr := os.Create(logPath)
-		if logErr == nil {
-			fmt.Fprintf(logFile, "mori launch @ %s\ncwd: %s\ncmd: %s %s\n---\n",
-				time.Now().Format(time.RFC3339), wt.Path, claudePath, strings.Join(args, " "))
-			cmd.Stdout = logFile
-			cmd.Stderr = logFile
-		}
-		devNull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
-		if err == nil {
-			cmd.Stdin = devNull
-			defer devNull.Close()
-		}
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-
-		if err := cmd.Start(); err != nil {
-			if logFile != nil {
-				logFile.Close()
-			}
 			return messageSentMsg{err: err}
 		}
-		_ = cmd.Process.Release()
-		return messageSentMsg{logPath: logPath}
+		return messageSentMsg{bgID: id}
 	}
 }
 

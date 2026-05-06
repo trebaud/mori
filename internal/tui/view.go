@@ -32,20 +32,19 @@ func (m model) View() tea.View {
 	}
 
 	var base string
-	switch {
-	case m.showHelp:
+	if m.showHelp {
 		base = m.viewHelp(totalWidth)
-	case m.showInsights && totalWidth >= sideByMinWidth:
-		base = m.viewSideBySide(totalWidth)
-	case m.showInsights && totalWidth >= listOnlyMinWidth:
-		base = m.viewStacked(totalWidth)
-	default:
+	} else {
 		base = m.viewListOnly(totalWidth)
 	}
 
 	out := base
-	if m.mode == modeCreate || m.mode == modeMessage || m.mode == modeCreating {
+	switch {
+	case m.mode == modeCreate || m.mode == modeMessage || m.mode == modeCreating:
 		out = m.applyOverlay(base, totalWidth)
+	case m.showInsights && totalWidth < splitMinWidth:
+		// Narrow terminals fall back to the floating overlay.
+		out = m.applyInsightsOverlay(base, totalWidth)
 	}
 
 	v := tea.NewView(out)
@@ -65,70 +64,186 @@ func (m model) viewTooSmall() string {
 // --- Top-level layouts ---
 
 func (m model) viewListOnly(width int) string {
-	innerW := width - 2
-
 	top := m.renderTopBar(width)
 	warn := m.renderMissingToolsWarning(width)
-	list := m.renderWorktreeList(innerW)
-	framed := renderFrame(list, width, "worktrees")
+
+	var framed string
+	if m.showInsights && width >= splitMinWidth {
+		framed = m.renderSplitColumns(width)
+	} else {
+		list := m.renderWorktreeList(width - 2)
+		framed = renderFrame(list, width, "worktrees")
+	}
+
 	nyan := m.renderNyanBanner(width)
-
 	footer := m.renderBelowList(width) + m.renderFooter(width-2)
-
 	return "\n" + top + "\n" + warn + "\n" + framed + "\n" + nyan + "\n" + footer + "\n"
 }
 
-func (m model) viewStacked(width int) string {
-	innerW := width - 2
+// renderSplitColumns renders the worktree list and insights panel side by side.
+func (m model) renderSplitColumns(width int) string {
+	innerH := m.listInnerHeight()
 
-	top := m.renderTopBar(width)
-	warn := m.renderMissingToolsWarning(width)
-
-	// Render the insights panel first to know how tall it is, then give the
-	// list whatever vertical space is left so the footer stays anchored.
-	insights := m.renderInsightsPanel(innerW - 2)
-	insightsH := lipgloss.Height(insights)
-	if insightsH < 1 {
-		insightsH = 1
+	leftW := width * 55 / 100
+	rightW := width - leftW - 1
+	if leftW < 55 {
+		leftW = 55
+	}
+	if rightW < 38 {
+		rightW = 38
 	}
 
-	// top blank + topbar + blank + 2×(frame top+bottom) + nyan banner + status + footer + spacer
-	const reserved = 10
-	listH := m.height - reserved - insightsH
-	if listH < 4 {
-		listH = 4
+	list := m.renderWorktreeListWithHeight(leftW-2, innerH)
+	listFrame := renderFrame(list, leftW, "worktrees")
+	frameH := lipgloss.Height(listFrame)
+
+	var title string
+	if wt := m.selectedWorktree(); wt != nil {
+		title = "insights · " + wt.Branch
+	} else {
+		title = "insights"
 	}
-	list := m.renderWorktreeListWithHeight(innerW, listH)
-	listFrame := renderFrame(list, width, "worktrees")
+	insightsFrame := m.renderInsightsSidePanel(rightW, frameH, title)
 
-	insightsFrame := renderFrame(insights, width, "agent insights")
-
-	nyan := m.renderNyanBanner(width)
-	footer := m.renderBelowList(width) + m.renderFooter(width-2)
-
-	return "\n" + top + "\n" + warn + "\n" + listFrame + "\n" + insightsFrame + "\n" + nyan + "\n" + footer + "\n"
+	return joinColumns(listFrame, insightsFrame)
 }
 
-func (m model) viewSideBySide(width int) string {
-	rightW := insightsPaneWidth(width)
-	leftW := width - rightW - 1
+// renderInsightsSidePanel renders the insights content into a frame of exactly
+// outerH rows, with scrolling when content exceeds the available height.
+func (m model) renderInsightsSidePanel(width, outerH int, title string) string {
+	panelW := width - 4
+	innerH := outerH - 2
+	if panelW < 10 {
+		panelW = 10
+	}
+	if innerH < 4 {
+		innerH = 4
+	}
 
-	leftContent := m.renderWorktreeList(leftW - 2)
-	rightContent := m.renderInsightsPanel(rightW - 2)
+	fullContent := m.renderInsightsPanel(panelW)
+	lines := strings.Split(fullContent, "\n")
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
 
-	leftContent, rightContent = padToSameHeight(leftContent, rightContent)
+	totalLines := len(lines)
+	canScroll := totalLines > innerH
 
-	leftFrame := renderFrame(leftContent, leftW, "worktrees")
-	rightFrame := renderFrame(rightContent, rightW, "agent insights")
+	visibleH := innerH
+	if canScroll {
+		visibleH = innerH - 1
+	}
 
-	joined := lipgloss.JoinHorizontal(lipgloss.Top, leftFrame, " ", rightFrame)
+	maxOffset := totalLines - visibleH
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	offset := m.insightsScrollOffset
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
 
-	top := m.renderTopBar(width)
-	warn := m.renderMissingToolsWarning(width)
-	nyan := m.renderNyanBanner(width)
-	footer := m.renderBelowList(width) + m.renderFooter(width-2)
+	end := offset + visibleH
+	if end > totalLines {
+		end = totalLines
+	}
+	visible := append([]string{}, lines[offset:end]...)
+	for len(visible) < visibleH {
+		visible = append(visible, "")
+	}
 
-	return "\n" + top + "\n" + warn + "\n" + joined + "\n" + nyan + "\n" + footer + "\n"
+	var sb strings.Builder
+	sb.WriteString(strings.Join(visible, "\n"))
+	if canScroll {
+		sb.WriteString("\n")
+		var arrows []string
+		if offset > 0 {
+			arrows = append(arrows, "↑")
+		}
+		if offset < maxOffset {
+			arrows = append(arrows, "↓")
+		}
+		sb.WriteString("   " + dimStyle.Render(strings.Join(arrows, "")+" [ / ] scroll"))
+	}
+
+	return renderFrame(sb.String(), width, title)
+}
+
+// joinColumns concatenates two frame strings side by side with a single space separator.
+func joinColumns(left, right string) string {
+	ls := strings.Split(left, "\n")
+	rs := strings.Split(right, "\n")
+	n := len(ls)
+	if len(rs) > n {
+		n = len(rs)
+	}
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		l, r := "", ""
+		if i < len(ls) {
+			l = ls[i]
+		}
+		if i < len(rs) {
+			r = rs[i]
+		}
+		b.WriteString(l + " " + r)
+	}
+	return b.String()
+}
+
+// renderInsightsCard builds the floating insights window for narrow terminals.
+func (m model) renderInsightsCard(totalWidth, totalHeight int) string {
+	floatW := insightsFloatW
+	floatH := insightsFloatH
+	if floatW > totalWidth-4 {
+		floatW = totalWidth - 4
+	}
+	if floatH > totalHeight-4 {
+		floatH = totalHeight - 4
+	}
+	if floatW < 40 {
+		floatW = 40
+	}
+	if floatH < 10 {
+		floatH = 10
+	}
+
+	var title string
+	if wt := m.selectedWorktree(); wt != nil {
+		title = "insights · " + wt.Branch
+	} else {
+		title = "agent insights"
+	}
+	return m.renderInsightsSidePanel(floatW, floatH, title)
+}
+
+// applyInsightsOverlay composites the floating insights card over the dimmed
+// base view, centered horizontally and vertically.
+func (m model) applyInsightsOverlay(base string, totalWidth int) string {
+	card := m.renderInsightsCard(totalWidth, m.height)
+	cardW := lipgloss.Width(card)
+	cardH := lipgloss.Height(card)
+	baseH := lipgloss.Height(base)
+
+	x := (totalWidth - cardW) / 2
+	if x < 0 {
+		x = 0
+	}
+	y := (baseH - cardH) / 2
+	if y < 2 {
+		y = 2
+	}
+
+	dimmed := dimBackground(base)
+	baseLayer := lipgloss.NewLayer(dimmed).Z(0)
+	cardLayer := lipgloss.NewLayer(card).X(x).Y(y).Z(1)
+	return lipgloss.NewCompositor(baseLayer, cardLayer).Render()
 }
 
 func (m model) renderMissingToolsWarning(width int) string {
@@ -360,11 +475,7 @@ func (m model) renderMessageCard(width int) string {
 	var target string
 	if wt != nil {
 		target = mutedStyle.Render("target ") + textStyle.Render(wt.Branch)
-		if wt.Insights.SessionID != "" {
-			target += mutedStyle.Render("  ·  resumes existing session")
-		} else {
-			target += mutedStyle.Render("  ·  starts new session")
-		}
+		target += mutedStyle.Render("  ·  claude --bg")
 		target += mutedStyle.Render("  ·  --dangerously-skip-permissions")
 	}
 
@@ -458,7 +569,7 @@ func (m model) renderFooter(width int) string {
 
 	insightsHint := "[tab] insights"
 	if m.showInsights {
-		insightsHint = "[tab] hide"
+		insightsHint = "[tab] close  [[/]] scroll"
 	}
 	// Keep the always-visible footer to ~5 essentials. Delete, message,
 	// archive, and refresh are documented under [?] help.
@@ -631,7 +742,8 @@ func (m model) renderWorktreeRow(cursorIdx, wtIdx, rowW, branchW, activityW, sta
 		activity = relativeTime(wt.Insights.LastActivity)
 	}
 
-	statusText := statusIcon(wt.Insights.Status) + " " + strings.ToLower(string(wt.Insights.Status))
+	effStatus := m.effectiveStatus(wt)
+	statusText := statusIcon(effStatus) + " " + strings.ToLower(string(effStatus))
 	contextText := renderInlineContextRaw(wt.Insights)
 
 	// Each span sets both fg AND bg (when selected) so terminal resets
@@ -648,8 +760,8 @@ func (m model) renderWorktreeRow(cursorIdx, wtIdx, rowW, branchW, activityW, sta
 	switch {
 	case selected:
 		accentBar = bg(lipgloss.NewStyle().Foreground(colAccent)).Render("▌")
-	case wt.Insights.Status == insights.StatusWorking || wt.Insights.Status == insights.StatusWait:
-		accentBar = lipgloss.NewStyle().Foreground(statusColor(wt.Insights.Status)).Render("▏")
+	case effStatus == insights.StatusWorking || effStatus == insights.StatusWait:
+		accentBar = lipgloss.NewStyle().Foreground(statusColor(effStatus)).Render("▏")
 	default:
 		accentBar = " "
 	}
@@ -662,7 +774,7 @@ func (m model) renderWorktreeRow(cursorIdx, wtIdx, rowW, branchW, activityW, sta
 		branchStyleCell = lipgloss.NewStyle().Foreground(colText).Width(branchW)
 		activityStyleCell = lipgloss.NewStyle().Foreground(colDim).Width(activityW)
 	}
-	statusCellStyle = statusStyle(wt.Insights.Status).Width(statusW)
+	statusCellStyle = statusStyle(effStatus).Width(statusW)
 	contextCellStyle = contextFgStyle(wt.Insights).Width(contextW)
 
 	branchCell := bg(branchStyleCell).Render(branchLabel)
@@ -760,8 +872,10 @@ func (m model) renderInsightsPanel(width int) string {
 
 	var s strings.Builder
 
+	effStatus := m.effectiveStatus(*wt)
+
 	// Header: status pill + model/cost on the right.
-	pill := renderStatusPill(wt.Insights.Status)
+	pill := renderStatusPill(effStatus)
 	var rightParts []string
 	if wt.Insights.Model != "" {
 		rightParts = append(rightParts, textStyle.Render(insights.ModelTier(wt.Insights.Model)))
@@ -782,9 +896,9 @@ func (m model) renderInsightsPanel(width int) string {
 	switch {
 	case wt.Insights.HasError:
 		detail = errorStyle.Render("⚠ last tool errored")
-	case wt.Insights.LastTool != "" && wt.Insights.Status == insights.StatusWorking:
+	case wt.Insights.LastTool != "" && effStatus == insights.StatusWorking:
 		detail = mutedStyle.Render("running ") + textStyle.Render(wt.Insights.LastTool)
-	case wt.Insights.Status == insights.StatusIdle && !wt.Insights.LastActivity.IsZero():
+	case effStatus == insights.StatusIdle && !wt.Insights.LastActivity.IsZero():
 		detail = mutedStyle.Render("last active " + relativeTime(wt.Insights.LastActivity))
 	}
 	if detail != "" {
@@ -795,29 +909,78 @@ func (m model) renderInsightsPanel(width int) string {
 	s.WriteString("\n")
 	s.WriteString(renderContextRow(wt.Insights, width-2) + "\n")
 
-	// Key/value rows.
+	// Current prompt — most recent user request.
+	if wt.Insights.LastPrompt != "" {
+		s.WriteString("\n")
+		s.WriteString(" " + headingStyle.Render("prompt") + "\n")
+		for _, line := range wrapText(wt.Insights.LastPrompt, width-3) {
+			s.WriteString("   " + textStyle.Render(line) + "\n")
+		}
+	}
+
+	// Progress — todo list from the most recent TodoWrite call.
+	if len(wt.Insights.Todos) > 0 {
+		done := 0
+		for _, t := range wt.Insights.Todos {
+			if t.Status == "completed" {
+				done++
+			}
+		}
+		counter := mutedStyle.Render(fmt.Sprintf("%d/%d", done, len(wt.Insights.Todos)))
+		s.WriteString("\n")
+		s.WriteString(" " + headingStyle.Render("progress") + "  " + counter + "\n")
+
+		spin := spinnerFrames[m.animFrame%len(spinnerFrames)]
+		labelW := width - 6 // 3 indent + 1 glyph + 1 space + 1 margin
+		for _, todo := range wt.Insights.Todos {
+			var glyph string
+			var label string
+			switch todo.Status {
+			case "completed":
+				glyph = successStyle.Render("✓")
+				text := truncate(todo.Content, labelW)
+				label = mutedStyle.Render(text)
+			case "in_progress":
+				glyph = workingStyle.Render(spin)
+				text := todo.ActiveForm
+				if text == "" {
+					text = todo.Content
+				}
+				text = truncate(text, labelW)
+				label = textStyle.Bold(true).Render(text)
+			default:
+				glyph = dimStyle.Render("○")
+				text := truncate(todo.Content, labelW)
+				label = dimStyle.Render(text)
+			}
+			s.WriteString("   " + glyph + " " + label + "\n")
+		}
+	}
+
+	// Attach hint — shown when a bg session exists for this worktree.
+	// Ctrl+Z detaches without interrupting the session, so the user can pop
+	// in and out without stopping work in progress.
+	if sess := m.bgSession(wt.Path); sess != nil {
+		s.WriteString("\n")
+		label := "[enter] attach " + sess.ID + "  ·  ctrl+z to detach"
+		if !sess.Live() {
+			label = "[enter] resume " + sess.ID + " (" + sess.State + ")"
+		}
+		s.WriteString("  " + dimStyle.Render(label) + "\n")
+	}
+
+	// Metadata: session, branch, turn, PR.
 	s.WriteString("\n")
 	s.WriteString(kvRow(" session", insightsSessionLabel(wt.Insights), width) + "\n")
 	if wt.Insights.AheadBehind != "" {
 		s.WriteString(kvRow(" branch", textStyle.Render(wt.Insights.AheadBehind), width) + "\n")
 	}
-	if wt.PR != nil && wt.PR.Number > 0 {
-		s.WriteString(renderPRSection(wt.PR, width))
-	}
-	if wt.Insights.Status == insights.StatusWorking && (wt.Insights.TurnDurationS > 0 || wt.Insights.MessageCount > 0) {
+	if effStatus == insights.StatusWorking && (wt.Insights.TurnDurationS > 0 || wt.Insights.MessageCount > 0) {
 		turn := fmt.Sprintf("%ds · %d msgs", wt.Insights.TurnDurationS, wt.Insights.MessageCount)
 		s.WriteString(kvRow(" turn", textStyle.Render(turn), width) + "\n")
 	}
-
-	// Task.
-	task := wt.Insights.CurrentTask
-	if task == "" {
-		task = "—"
-	}
-	s.WriteString("\n")
-	s.WriteString(" " + headingStyle.Render("task") + "\n")
-	for _, line := range wrapText(task, width-3) {
-		s.WriteString("   " + textStyle.Render(line) + "\n")
+	if wt.PR != nil && wt.PR.Number > 0 {
+		s.WriteString(renderPRSection(wt.PR, width))
 	}
 
 	// Recent commits.
@@ -834,6 +997,26 @@ func (m model) renderInsightsPanel(width int) string {
 	}
 
 	return s.String()
+}
+
+// truncate clips s to at most maxW visual columns, appending "…" if clipped.
+func truncate(s string, maxW int) string {
+	if lipgloss.Width(s) <= maxW {
+		return s
+	}
+	// Walk runes so we don't slice mid-codepoint.
+	w := 0
+	for i, r := range s {
+		rw := 1
+		if r > 0x7F {
+			rw = 2 // conservative estimate for wide chars
+		}
+		if w+rw > maxW-1 {
+			return s[:i] + "…"
+		}
+		w += rw
+	}
+	return s
 }
 
 func insightsSessionLabel(ins insights.Insights) string {
@@ -979,8 +1162,10 @@ func (m model) viewHelp(width int) string {
 			{"g / G", "jump to first / last"},
 			{"ctrl+d/u", "half-page down / up"},
 			{"w", "jump to next working/waiting"},
-			{"enter, o", "open claude code in worktree"},
+			{"enter, o", "open claude (attaches bg session if one exists)"},
+			{"ctrl+z", "detach from claude — leaves the bg session running"},
 			{"tab, i", "toggle insights panel"},
+			{"[ / ]", "scroll insights up / down"},
 			{"esc", "back out of overlays / filters"},
 			{"q, ctrl+c", "quit"},
 		}},
@@ -988,7 +1173,7 @@ func (m model) viewHelp(width int) string {
 			{"n", "create new worktree"},
 			{"D", "delete worktree (force)"},
 			{"y", "yank (copy) worktree path"},
-			{"m", "launch agent (claude --dangerously-skip-permissions, background)"},
+			{"m", "send async message (claude --bg session)"},
 			{"r", "refresh insights now"},
 			{"p", "refresh PR status"},
 			{"?", "toggle this help"},
