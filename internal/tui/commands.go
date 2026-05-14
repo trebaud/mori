@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -156,6 +157,25 @@ func launchAgentCmd(wt internal.Worktree, text string) tea.Cmd {
 			return messageSentMsg{err: err}
 		}
 		return messageSentMsg{bgID: id}
+	}
+}
+
+// openPRInBrowserCmd shells out to `gh pr view --web` without blocking the TUI.
+// The status bar reflects success/failure via a follow-up tick; for simplicity
+// we don't surface gh errors back into the model.
+func openPRInBrowserCmd(number int) tea.Cmd {
+	return func() tea.Msg {
+		_ = exec.Command("gh", "pr", "view", "--web", fmt.Sprintf("%d", number)).Start()
+		return nil
+	}
+}
+
+// stopBgSessionCmd terminates a `claude --bg` session by id and forces an
+// immediate insights refresh on the next tick.
+func stopBgSessionCmd(id string) tea.Cmd {
+	return func() tea.Msg {
+		_ = bg.Stop("", id)
+		return nil
 	}
 }
 

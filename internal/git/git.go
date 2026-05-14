@@ -161,6 +161,47 @@ func HeadRef(repoPath string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// DiffShortstat returns a compact summary of uncommitted changes against HEAD,
+// e.g. "3 files · +127/-44". Empty string when the working tree is clean.
+func DiffShortstat(repoPath string) string {
+	out, err := exec.Command("git", "-C", repoPath, "diff", "--shortstat", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(out))
+	if line == "" {
+		return ""
+	}
+	// Example: "3 files changed, 127 insertions(+), 44 deletions(-)"
+	var files, ins, del string
+	for _, part := range strings.Split(line, ",") {
+		p := strings.TrimSpace(part)
+		switch {
+		case strings.HasSuffix(p, "changed"):
+			files = strings.TrimSuffix(strings.TrimSpace(strings.TrimSuffix(p, "changed")), "files")
+			files = strings.TrimSpace(strings.TrimSuffix(files, "file"))
+		case strings.Contains(p, "insertion"):
+			ins = strings.Fields(p)[0]
+		case strings.Contains(p, "deletion"):
+			del = strings.Fields(p)[0]
+		}
+	}
+	if files == "" {
+		return ""
+	}
+	label := files + " files"
+	if files == "1" {
+		label = "1 file"
+	}
+	if ins == "" {
+		ins = "0"
+	}
+	if del == "" {
+		del = "0"
+	}
+	return fmt.Sprintf("%s · +%s/-%s", label, ins, del)
+}
+
 // AheadBehind returns a "+ahead/-behind" string relative to the default branch,
 // or an empty string if even or on error.
 func AheadBehind(repoPath string) string {

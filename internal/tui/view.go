@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"image/color"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/trebaud/mori/internal"
 	"github.com/trebaud/mori/internal/github"
 	"github.com/trebaud/mori/internal/insights"
 )
@@ -97,27 +99,30 @@ func (m model) renderSplitColumns(width int) string {
 	listFrame := renderFrame(list, leftW, "worktrees")
 	frameH := lipgloss.Height(listFrame)
 
-	var title string
-	if wt := m.selectedWorktree(); wt != nil {
-		title = "insights · " + wt.Branch
-	} else {
-		title = "insights"
-	}
-	insightsFrame := m.renderInsightsSidePanel(rightW, frameH, title)
+	insightsFrame := m.renderInsightsSidePanel(rightW, frameH, m.insightsTitle())
 
 	return joinColumns(listFrame, insightsFrame)
 }
 
 // renderInsightsSidePanel renders the insights content into a frame of exactly
-// outerH rows, with scrolling when content exceeds the available height.
+// outerH rows. Layout from top to bottom: tab strip, scrollable content, fixed
+// keybind footer. Tab content scrolls with [ / ] when it overflows.
 func (m model) renderInsightsSidePanel(width, outerH int, title string) string {
 	panelW := width - 4
-	innerH := outerH - 2
+	innerH := outerH - 2 // frame top + bottom
 	if panelW < 10 {
 		panelW = 10
 	}
 	if innerH < 4 {
 		innerH = 4
+	}
+
+	tabStrip := m.renderInsightsTabStrip(panelW)
+	footer := m.renderInsightsFooterStrip(panelW)
+	// Reserve one row for tab strip, one for footer.
+	contentH := innerH - 2
+	if contentH < 2 {
+		contentH = 2
 	}
 
 	fullContent := m.renderInsightsPanel(panelW)
@@ -127,11 +132,10 @@ func (m model) renderInsightsSidePanel(width, outerH int, title string) string {
 	}
 
 	totalLines := len(lines)
-	canScroll := totalLines > innerH
-
-	visibleH := innerH
+	canScroll := totalLines > contentH
+	visibleH := contentH
 	if canScroll {
-		visibleH = innerH - 1
+		visibleH = contentH - 1
 	}
 
 	maxOffset := totalLines - visibleH
@@ -156,6 +160,8 @@ func (m model) renderInsightsSidePanel(width, outerH int, title string) string {
 	}
 
 	var sb strings.Builder
+	sb.WriteString(tabStrip)
+	sb.WriteString("\n")
 	sb.WriteString(strings.Join(visible, "\n"))
 	if canScroll {
 		sb.WriteString("\n")
@@ -168,8 +174,60 @@ func (m model) renderInsightsSidePanel(width, outerH int, title string) string {
 		}
 		sb.WriteString("   " + dimStyle.Render(strings.Join(arrows, "")+" [ / ] scroll"))
 	}
+	sb.WriteString("\n")
+	sb.WriteString(footer)
 
 	return renderFrame(sb.String(), width, title)
+}
+
+// insightsTabNames is the canonical tab order; index matches the [1-5] hotkey.
+var insightsTabNames = []string{"overview", "activity", "git", "todos", "cost"}
+
+// renderInsightsTabStrip draws the per-tab navigation row. The active tab is
+// bold; others are muted. Tab names are prefixed with a numeric hint so a new
+// user discovers the hotkey without consulting the footer.
+func (m model) renderInsightsTabStrip(width int) string {
+	tab := m.insightsTab
+	if tab < 0 || tab >= len(insightsTabNames) {
+		tab = 0
+	}
+	var parts []string
+	for i, name := range insightsTabNames {
+		label := fmt.Sprintf("%d %s", i+1, name)
+		if i == tab {
+			parts = append(parts, selectedStyle.Render(label))
+		} else {
+			parts = append(parts, mutedStyle.Render(label))
+		}
+	}
+	return " " + strings.Join(parts, dimStyle.Render("  "))
+}
+
+// renderInsightsFooterStrip is the always-visible keybind row at the bottom of
+// the insights frame. Action keys ([c]/[p]/[l]/[K]) only do something while the
+// panel is open — see handleNormalKey.
+func (m model) renderInsightsFooterStrip(width int) string {
+	hints := []string{
+		dimStyle.Render("[1-5]") + mutedStyle.Render(" tab"),
+		dimStyle.Render("[j/k]") + mutedStyle.Render(" wt"),
+		dimStyle.Render("[c]") + mutedStyle.Render(" copy"),
+		dimStyle.Render("[p]") + mutedStyle.Render(" pr"),
+		dimStyle.Render("[l]") + mutedStyle.Render(" log"),
+		dimStyle.Render("[K]") + mutedStyle.Render(" kill"),
+		dimStyle.Render("[esc]") + mutedStyle.Render(" close"),
+	}
+	line := strings.Join(hints, dimStyle.Render("  "))
+	if lipgloss.Width(line) > width-1 {
+		// Drop the rarer hints first so something always fits.
+		short := []string{
+			dimStyle.Render("[1-5]") + mutedStyle.Render(" tab"),
+			dimStyle.Render("[j/k]") + mutedStyle.Render(" wt"),
+			dimStyle.Render("[c/p/l/K]") + mutedStyle.Render(" act"),
+			dimStyle.Render("[esc]") + mutedStyle.Render(" close"),
+		}
+		line = strings.Join(short, dimStyle.Render("  "))
+	}
+	return " " + line
 }
 
 // joinColumns concatenates two frame strings side by side with a single space separator.
@@ -214,13 +272,26 @@ func (m model) renderInsightsCard(totalWidth, totalHeight int) string {
 		floatH = 10
 	}
 
-	var title string
-	if wt := m.selectedWorktree(); wt != nil {
-		title = "insights · " + wt.Branch
-	} else {
-		title = "agent insights"
+	return m.renderInsightsSidePanel(floatW, floatH, m.insightsTitle())
+}
+
+// insightsTitle returns the frame title shown above the insights panel:
+// "insights · branch · session-title" (with title trimmed to fit).
+func (m model) insightsTitle() string {
+	wt := m.selectedWorktree()
+	if wt == nil {
+		return "agent insights"
 	}
-	return m.renderInsightsSidePanel(floatW, floatH, title)
+	parts := []string{"insights", wt.Branch}
+	if t := wt.Insights.SessionTitle; t != "" {
+		if len(t) > 32 {
+			t = t[:31] + "…"
+		}
+		parts = append(parts, t)
+	} else if wt.Insights.Slug != "" {
+		parts = append(parts, wt.Insights.Slug)
+	}
+	return strings.Join(parts, " · ")
 }
 
 // applyInsightsOverlay composites the floating insights card over the dimmed
@@ -569,7 +640,7 @@ func (m model) renderFooter(width int) string {
 
 	insightsHint := "[tab] insights"
 	if m.showInsights {
-		insightsHint = "[tab] close  [[/]] scroll"
+		insightsHint = "[tab] close  [1-5] tabs"
 	}
 	// Keep the always-visible footer to ~5 essentials. Delete, message,
 	// archive, and refresh are documented under [?] help.
@@ -864,21 +935,43 @@ func contextFgStyle(ins insights.Insights) lipgloss.Style {
 
 // --- Insights panel ---
 
+// renderInsightsPanel dispatches to the per-tab renderer based on
+// m.insightsTab. The frame chrome (tab strip + footer) is added by
+// renderInsightsSidePanel — each tab body is the scrollable middle.
 func (m model) renderInsightsPanel(width int) string {
 	wt := m.selectedWorktree()
 	if wt == nil {
 		return "\n  " + mutedStyle.Render("no worktree selected") + "\n"
 	}
+	switch m.insightsTab {
+	case 1:
+		return m.renderInsightsActivity(*wt, width)
+	case 2:
+		return m.renderInsightsGit(*wt, width)
+	case 3:
+		return m.renderInsightsTodos(*wt, width)
+	case 4:
+		return m.renderInsightsCost(*wt, width)
+	default:
+		return m.renderInsightsOverview(*wt, width)
+	}
+}
 
+// renderInsightsOverview is the "at a glance" tab: status, model, cost, the
+// pending question (if any) or last prompt, the running todo, attach hint.
+// Heavy detail (full todo list, commits, tool mix) lives on dedicated tabs.
+func (m model) renderInsightsOverview(wt internal.Worktree, width int) string {
 	var s strings.Builder
+	effStatus := m.effectiveStatus(wt)
 
-	effStatus := m.effectiveStatus(*wt)
-
-	// Header: status pill + model/cost on the right.
-	pill := renderStatusPill(effStatus)
+	// Header: status pill + model/mode/cost on the right.
+	pill := renderStatusPillWithDuration(effStatus, wt.Insights.LastActivity)
 	var rightParts []string
 	if wt.Insights.Model != "" {
-		rightParts = append(rightParts, textStyle.Render(insights.ModelTier(wt.Insights.Model)))
+		rightParts = append(rightParts, renderModelTier(wt.Insights.Model))
+	}
+	if wt.Insights.PlanModeActive {
+		rightParts = append(rightParts, waitingStyle.Render("PLAN"))
 	}
 	if wt.Insights.Mode != "" && wt.Insights.Mode != "default" {
 		rightParts = append(rightParts, mutedStyle.Render(wt.Insights.Mode))
@@ -891,9 +984,15 @@ func (m model) renderInsightsPanel(width int) string {
 	s.WriteString("\n")
 	s.WriteString(padBetween(pill, right, width) + "\n")
 
-	// Status detail — last tool, error, or relative time.
+	// Status detail — error with tool name, running tool, or last-active time.
 	var detail string
 	switch {
+	case wt.Insights.HasError && wt.Insights.ErrorDetail.Tool != "":
+		msg := wt.Insights.ErrorDetail.Msg
+		if msg == "" {
+			msg = "tool errored"
+		}
+		detail = errorStyle.Render("⚠ "+wt.Insights.ErrorDetail.Tool+": ") + mutedStyle.Render(truncate(msg, width-12))
 	case wt.Insights.HasError:
 		detail = errorStyle.Render("⚠ last tool errored")
 	case wt.Insights.LastTool != "" && effStatus == insights.StatusWorking:
@@ -905,61 +1004,53 @@ func (m model) renderInsightsPanel(width int) string {
 		s.WriteString(" " + detail + "\n")
 	}
 
-	// Context bar.
+	// Context bar with burn-rate warning.
 	s.WriteString("\n")
 	s.WriteString(renderContextRow(wt.Insights, width-2) + "\n")
 
-	// Current prompt — most recent user request.
-	if wt.Insights.LastPrompt != "" {
+	// Pending question (when waiting) takes priority over the last prompt.
+	if wt.Insights.PendingQuestion != "" {
+		s.WriteString("\n")
+		s.WriteString(" " + headingStyle.Render("waiting on you") + "\n")
+		for _, line := range wrapText(wt.Insights.PendingQuestion, width-3) {
+			s.WriteString("   " + waitingStyle.Render(line) + "\n")
+		}
+	} else if wt.Insights.LastPrompt != "" {
 		s.WriteString("\n")
 		s.WriteString(" " + headingStyle.Render("prompt") + "\n")
-		for _, line := range wrapText(wt.Insights.LastPrompt, width-3) {
+		prompt := stripPromptBoilerplate(wt.Insights.LastPrompt)
+		for _, line := range wrapText(prompt, width-3) {
 			s.WriteString("   " + textStyle.Render(line) + "\n")
 		}
 	}
 
-	// Progress — todo list from the most recent TodoWrite call.
-	if len(wt.Insights.Todos) > 0 {
+	// Compact todo summary — full list lives on the "todos" tab.
+	if n := len(wt.Insights.Todos); n > 0 {
 		done := 0
-		for _, t := range wt.Insights.Todos {
+		var inProgress *insights.TodoItem
+		for i := range wt.Insights.Todos {
+			t := &wt.Insights.Todos[i]
 			if t.Status == "completed" {
 				done++
 			}
+			if t.Status == "in_progress" && inProgress == nil {
+				inProgress = t
+			}
 		}
-		counter := mutedStyle.Render(fmt.Sprintf("%d/%d", done, len(wt.Insights.Todos)))
+		counter := mutedStyle.Render(fmt.Sprintf("%d/%d", done, n))
 		s.WriteString("\n")
 		s.WriteString(" " + headingStyle.Render("progress") + "  " + counter + "\n")
-
-		spin := spinnerFrames[m.animFrame%len(spinnerFrames)]
-		labelW := width - 6 // 3 indent + 1 glyph + 1 space + 1 margin
-		for _, todo := range wt.Insights.Todos {
-			var glyph string
-			var label string
-			switch todo.Status {
-			case "completed":
-				glyph = successStyle.Render("✓")
-				text := truncate(todo.Content, labelW)
-				label = mutedStyle.Render(text)
-			case "in_progress":
-				glyph = workingStyle.Render(spin)
-				text := todo.ActiveForm
-				if text == "" {
-					text = todo.Content
-				}
-				text = truncate(text, labelW)
-				label = textStyle.Bold(true).Render(text)
-			default:
-				glyph = dimStyle.Render("○")
-				text := truncate(todo.Content, labelW)
-				label = dimStyle.Render(text)
+		if inProgress != nil {
+			spin := workingStyle.Render(spinnerFrames[m.animFrame%len(spinnerFrames)])
+			text := inProgress.ActiveForm
+			if text == "" {
+				text = inProgress.Content
 			}
-			s.WriteString("   " + glyph + " " + label + "\n")
+			s.WriteString("   " + spin + " " + textStyle.Bold(true).Render(truncate(text, width-6)) + "\n")
 		}
 	}
 
-	// Attach hint — shown when a bg session exists for this worktree.
-	// Ctrl+Z detaches without interrupting the session, so the user can pop
-	// in and out without stopping work in progress.
+	// Attach hint — bg session present.
 	if sess := m.bgSession(wt.Path); sess != nil {
 		s.WriteString("\n")
 		label := "[enter] attach " + sess.ID + "  ·  ctrl+z to detach"
@@ -969,31 +1060,224 @@ func (m model) renderInsightsPanel(width int) string {
 		s.WriteString("  " + dimStyle.Render(label) + "\n")
 	}
 
-	// Metadata: session, branch, turn, PR.
+	return s.String()
+}
+
+// renderInsightsActivity is the "what is the agent doing" tab: which file it
+// just touched, the chronological feed of edits and sub-agent spawns, the
+// tool-mix summary, and a slash-command breadcrumb trail.
+func (m model) renderInsightsActivity(wt internal.Worktree, width int) string {
+	var s strings.Builder
+	ins := wt.Insights
+
 	s.WriteString("\n")
-	s.WriteString(kvRow(" session", insightsSessionLabel(wt.Insights), width) + "\n")
-	if wt.Insights.AheadBehind != "" {
-		s.WriteString(kvRow(" branch", textStyle.Render(wt.Insights.AheadBehind), width) + "\n")
-	}
-	if effStatus == insights.StatusWorking && (wt.Insights.TurnDurationS > 0 || wt.Insights.MessageCount > 0) {
-		turn := fmt.Sprintf("%ds · %d msgs", wt.Insights.TurnDurationS, wt.Insights.MessageCount)
-		s.WriteString(kvRow(" turn", textStyle.Render(turn), width) + "\n")
-	}
-	if wt.PR != nil && wt.PR.Number > 0 {
-		s.WriteString(renderPRSection(wt.PR, width))
+
+	// Pinned: most recently edited file.
+	if len(ins.FilesTouched) > 0 {
+		f := ins.FilesTouched[0]
+		s.WriteString(" " + headingStyle.Render("editing") + "\n")
+		s.WriteString("   " + textStyle.Bold(true).Render(truncate(shortPath(f.Path), width-6)) + "\n")
 	}
 
-	// Recent commits.
-	if len(wt.Insights.GitLog) > 0 {
+	// Files touched (top 6 after the pinned one).
+	if len(ins.FilesTouched) > 1 {
+		s.WriteString("\n")
+		s.WriteString(" " + headingStyle.Render("files touched") + "\n")
+		max := 6
+		if len(ins.FilesTouched) < max+1 {
+			max = len(ins.FilesTouched) - 1
+		}
+		for i := 1; i <= max; i++ {
+			f := ins.FilesTouched[i]
+			suffix := ""
+			if f.Edits > 1 {
+				suffix = mutedStyle.Render(fmt.Sprintf("  ×%d", f.Edits))
+			}
+			s.WriteString("   " + mutedStyle.Render("·") + " " + textStyle.Render(truncate(shortPath(f.Path), width-10)) + suffix + "\n")
+		}
+	}
+
+	// Tool mix — running counts grouped into common buckets.
+	if len(ins.ToolCounts) > 0 {
+		s.WriteString("\n")
+		s.WriteString(" " + headingStyle.Render("tool mix") + "\n")
+		s.WriteString("   " + renderToolMix(ins.ToolCounts) + "\n")
+	}
+
+	// Sub-agents — running first, then resolved.
+	if len(ins.SubAgents) > 0 {
+		s.WriteString("\n")
+		s.WriteString(" " + headingStyle.Render("sub-agents") + "\n")
+		// Show last 5 in reverse insertion order.
+		start := len(ins.SubAgents) - 5
+		if start < 0 {
+			start = 0
+		}
+		for i := len(ins.SubAgents) - 1; i >= start; i-- {
+			sa := ins.SubAgents[i]
+			var glyph string
+			if sa.Running {
+				glyph = workingStyle.Render(spinnerFrames[m.animFrame%len(spinnerFrames)])
+			} else {
+				glyph = successStyle.Render("✓")
+			}
+			label := sa.Type
+			if sa.Description != "" {
+				label += " · " + sa.Description
+			}
+			s.WriteString("   " + glyph + " " + textStyle.Render(truncate(label, width-6)) + "\n")
+		}
+	}
+
+	// Slash commands.
+	if len(ins.LastSlashCommands) > 0 {
+		s.WriteString("\n")
+		s.WriteString(" " + headingStyle.Render("recent slash commands") + "\n")
+		s.WriteString("   " + mutedStyle.Render(strings.Join(ins.LastSlashCommands, "  ·  ")) + "\n")
+	}
+
+	if s.Len() == 1 { // only the leading newline
+		s.WriteString("  " + mutedStyle.Render("no tool activity yet") + "\n")
+	}
+
+	return s.String()
+}
+
+// renderInsightsGit is the git tab: branch ahead/behind, working-tree diff,
+// pull-request state, and the recent commit list.
+func (m model) renderInsightsGit(wt internal.Worktree, width int) string {
+	var s strings.Builder
+	ins := wt.Insights
+	s.WriteString("\n")
+
+	any := false
+	if ins.AheadBehind != "" {
+		s.WriteString(kvRow(" branch", textStyle.Render(ins.AheadBehind), width) + "\n")
+		any = true
+	}
+	if ins.DiffShortstat != "" {
+		s.WriteString(kvRow(" diff", textStyle.Render(ins.DiffShortstat), width) + "\n")
+		any = true
+	}
+
+	if wt.PR != nil && wt.PR.Number > 0 {
+		s.WriteString(renderPRSection(wt.PR, width))
+		any = true
+	}
+
+	if len(ins.GitLog) > 0 {
 		s.WriteString("\n")
 		s.WriteString(" " + headingStyle.Render("recent commits") + "\n")
-		for _, entry := range wt.Insights.GitLog {
+		for _, entry := range ins.GitLog {
 			line := entry
 			if lipgloss.Width(line) > width-5 {
 				line = line[:width-6] + "…"
 			}
 			s.WriteString("   " + mutedStyle.Render("•") + " " + textStyle.Render(line) + "\n")
 		}
+		any = true
+	}
+
+	if !any {
+		s.WriteString("  " + mutedStyle.Render("clean working tree, no commits yet") + "\n")
+	}
+	return s.String()
+}
+
+// renderInsightsTodos is the full todo list with statuses — what the overview
+// tab summarizes in one row.
+func (m model) renderInsightsTodos(wt internal.Worktree, width int) string {
+	var s strings.Builder
+	s.WriteString("\n")
+
+	if len(wt.Insights.Todos) == 0 {
+		s.WriteString("  " + mutedStyle.Render("no todos yet") + "\n")
+		return s.String()
+	}
+
+	done := 0
+	for _, t := range wt.Insights.Todos {
+		if t.Status == "completed" {
+			done++
+		}
+	}
+	counter := mutedStyle.Render(fmt.Sprintf("%d/%d", done, len(wt.Insights.Todos)))
+	s.WriteString(" " + headingStyle.Render("progress") + "  " + counter + "\n\n")
+
+	spin := spinnerFrames[m.animFrame%len(spinnerFrames)]
+	labelW := width - 6
+	for _, todo := range wt.Insights.Todos {
+		var glyph, label string
+		switch todo.Status {
+		case "completed":
+			glyph = successStyle.Render("✓")
+			label = mutedStyle.Render(truncate(todo.Content, labelW))
+		case "in_progress":
+			glyph = workingStyle.Render(spin)
+			text := todo.ActiveForm
+			if text == "" {
+				text = todo.Content
+			}
+			label = textStyle.Bold(true).Render(truncate(text, labelW))
+		default:
+			glyph = dimStyle.Render("○")
+			label = dimStyle.Render(truncate(todo.Content, labelW))
+		}
+		s.WriteString("   " + glyph + " " + label + "\n")
+	}
+	return s.String()
+}
+
+// renderInsightsCost is the cost tab: total spend, model-tier breakdown,
+// burn rate, projected cost, turn count, context bar, token sparkline.
+func (m model) renderInsightsCost(wt internal.Worktree, width int) string {
+	var s strings.Builder
+	ins := wt.Insights
+	s.WriteString("\n")
+
+	// Total cost row.
+	if ins.CostUSD > 0 {
+		s.WriteString(kvRow(" total", successStyle.Render(fmt.Sprintf("$%.2f", ins.CostUSD)), width) + "\n")
+	} else {
+		s.WriteString(kvRow(" total", mutedStyle.Render("$0.00"), width) + "\n")
+	}
+
+	// Per-tier cost — only show tiers with non-zero spend.
+	if len(ins.CostByTier) > 0 {
+		for _, tier := range []string{"opus", "sonnet", "haiku"} {
+			if c, ok := ins.CostByTier[tier]; ok && c > 0 {
+				s.WriteString(kvRow("   "+tier, textStyle.Render(fmt.Sprintf("$%.2f", c)), width) + "\n")
+			}
+		}
+	}
+
+	// Burn rate + projection.
+	if rate, proj := costRateAndProjection(ins); rate > 0 {
+		label := fmt.Sprintf("$%.2f/hr · proj $%.2f", rate, proj)
+		s.WriteString(kvRow(" rate", textStyle.Render(label), width) + "\n")
+	}
+
+	// Turn count.
+	if ins.TotalTurns > 0 {
+		s.WriteString(kvRow(" turns", textStyle.Render(fmt.Sprintf("%d", ins.TotalTurns)), width) + "\n")
+	}
+
+	// Context bar.
+	s.WriteString("\n")
+	s.WriteString(renderContextRow(ins, width-2) + "\n")
+
+	// Token velocity sparkline.
+	if len(ins.TokenSamples) >= 2 {
+		s.WriteString("\n")
+		s.WriteString(" " + headingStyle.Render("token trend") + "\n")
+		s.WriteString("   " + renderSparkline(ins.TokenSamples, width-6) + "\n")
+	}
+
+	// Session age.
+	if !ins.SessionStart.IsZero() {
+		age := time.Since(ins.SessionStart)
+		s.WriteString("\n")
+		s.WriteString(kvRow(" session age", mutedStyle.Render(formatDuration(age)), width) + "\n")
 	}
 
 	return s.String()
@@ -1020,6 +1304,12 @@ func truncate(s string, maxW int) string {
 }
 
 func insightsSessionLabel(ins insights.Insights) string {
+	// Prefer the AI-generated title when present — it's the most human-readable
+	// of the three. Fall back to user-supplied slug, then the JSONL filename's
+	// first 8 chars.
+	if ins.SessionTitle != "" {
+		return textStyle.Render(ins.SessionTitle)
+	}
 	if ins.Slug != "" {
 		return textStyle.Render(ins.Slug)
 	}
@@ -1031,12 +1321,6 @@ func insightsSessionLabel(ins insights.Insights) string {
 		return mutedStyle.Render(s)
 	}
 	return mutedStyle.Render("—")
-}
-
-func renderStatusPill(status insights.StatusType) string {
-	glyph := statusIcon(status)
-	text := strings.ToLower(string(status))
-	return statusStyle(status).Padding(0, 1).Render(glyph + " " + text)
 }
 
 func renderPRSection(pr *github.PRInfo, width int) string {
@@ -1091,13 +1375,40 @@ func renderContextRow(ins insights.Insights, width int) string {
 		label = fmt.Sprintf("%d%%", int(percent*100))
 	}
 
-	labelW := lipgloss.Width(label)
+	// Burn-rate warning: when context is past 75% AND climbing meaningfully
+	// across recent samples, flag a /compact hint so the user has time to act
+	// before the next big tool result blows the window.
+	var warning string
+	if percent >= 0.75 && contextRising(ins.TokenSamples) {
+		warning = " " + errorStyle.Render("⚠ /compact?")
+	}
+
+	labelW := lipgloss.Width(label) + lipgloss.Width(warning)
 	barW := width - labelW - 3
 	if barW < 8 {
 		barW = 8
 	}
 	bar := renderSmoothBar(percent, barW)
-	return " " + bar + " " + mutedStyle.Render(label)
+	return " " + bar + " " + mutedStyle.Render(label) + warning
+}
+
+// contextRising returns true if the last sample is meaningfully larger than
+// the median of recent samples — a heuristic for "growing fast" without
+// rate-of-change math.
+func contextRising(samples []int) bool {
+	if len(samples) < 3 {
+		return false
+	}
+	last := samples[len(samples)-1]
+	// Pick the median-ish baseline from the prior samples.
+	prior := append([]int{}, samples[:len(samples)-1]...)
+	sort.Ints(prior)
+	mid := prior[len(prior)/2]
+	if mid == 0 {
+		return false
+	}
+	// At least 5% increase over the median.
+	return last > mid+mid/20
 }
 
 // renderSmoothBar renders a horizontal progress bar with 8x sub-cell precision.
@@ -1165,6 +1476,7 @@ func (m model) viewHelp(width int) string {
 			{"enter, o", "open claude (attaches bg session if one exists)"},
 			{"ctrl+z", "detach from claude — leaves the bg session running"},
 			{"tab, i", "toggle insights panel"},
+			{"1-5", "switch insights tab (overview/activity/git/todos/cost)"},
 			{"[ / ]", "scroll insights up / down"},
 			{"esc", "back out of overlays / filters"},
 			{"q, ctrl+c", "quit"},
@@ -1172,10 +1484,13 @@ func (m model) viewHelp(width int) string {
 		{"actions", []struct{ key, desc string }{
 			{"n", "create new worktree"},
 			{"D", "delete worktree (force)"},
-			{"y", "yank (copy) worktree path"},
+			{"y", "yank worktree path"},
 			{"m", "send async message (claude --bg session)"},
 			{"r", "refresh insights now"},
-			{"p", "refresh PR status"},
+			{"p", "open PR (insights) / refresh PR status"},
+			{"c", "copy last prompt (insights only)"},
+			{"l", "copy log path (insights only)"},
+			{"K", "stop bg session (insights only)"},
 			{"?", "toggle this help"},
 		}},
 		{"search & sort", []struct{ key, desc string }{

@@ -190,6 +190,11 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		if m.showInsights {
 			m.insightsScrollOffset++
 		}
+	case "1", "2", "3", "4", "5":
+		if m.showInsights {
+			m.insightsTab = int(key[0] - '1')
+			m.insightsScrollOffset = 0
+		}
 	case "g":
 		m.cursor = 0
 		m.adjustScroll()
@@ -243,6 +248,14 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			return t
 		})
 	case "p":
+		// When insights is open and the current worktree has a PR, p opens
+		// it in the browser instead of triggering a full PR refresh.
+		if m.showInsights {
+			if wt := m.selectedWorktree(); wt != nil && wt.PR != nil && wt.PR.Number > 0 {
+				m.statusMsg = infoStatus("opening PR…")
+				return m, openPRInBrowserCmd(wt.PR.Number)
+			}
+		}
 		if !github.IsAvailable() {
 			m.statusMsg = errorStatus("gh not found in PATH")
 			return m, nil
@@ -250,6 +263,30 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		github.InvalidateAll()
 		m.statusMsg = loadingStatus("refreshing PRs…")
 		return m, fetchAllPRsCmd(m.worktrees)
+	case "c":
+		if m.showInsights {
+			if wt := m.selectedWorktree(); wt != nil && wt.Insights.LastPrompt != "" {
+				m.statusMsg = infoStatus("prompt yanked to clipboard")
+				return m, tea.SetClipboard(wt.Insights.LastPrompt)
+			}
+		}
+	case "l":
+		if m.showInsights {
+			if wt := m.selectedWorktree(); wt != nil && wt.Insights.LogPath != "" {
+				m.statusMsg = infoStatus("log path yanked to clipboard")
+				return m, tea.SetClipboard(wt.Insights.LogPath)
+			}
+		}
+	case "K":
+		if m.showInsights {
+			if wt := m.selectedWorktree(); wt != nil {
+				if sess := m.bgSession(wt.Path); sess != nil {
+					m.statusMsg = loadingStatus("stopping bg session…")
+					return m, stopBgSessionCmd(sess.ID)
+				}
+				m.statusMsg = errorStatus("no bg session to stop")
+			}
+		}
 	case "?":
 		m.showHelp = !m.showHelp
 	case "/":

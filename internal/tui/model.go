@@ -156,9 +156,10 @@ type model struct {
 	archived    map[string]bool
 	showArchive bool
 
-	scrollOffset        int
+	scrollOffset         int
 	insightsScrollOffset int
-	missingTools        []string
+	insightsTab          int
+	missingTools         []string
 
 	animFrame int
 
