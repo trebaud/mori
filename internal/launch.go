@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/trebaud/mori/internal/git"
 )
@@ -24,15 +23,18 @@ func LaunchClaude(wt Worktree) error {
 		claudePath = p
 	}
 
-	baseArgs := []string{"--tmux"}
+	baseArgs := []string{"--tmux=classic"}
 	defaultBranch := git.DefaultBranch(".")
 	if wt.Branch != defaultBranch {
 		baseArgs = append(baseArgs, "--worktree", filepath.Base(wt.Path))
 	}
 
+	// Remind the user how to leave without killing the session: tmux detach,
+	// not ctrl+z (which claude binds to its own suspend).
+	fmt.Fprintf(os.Stderr, "  \033[0;90m%s\033[0m\n", "press ctrl+b then d to detach — the session keeps running in the background")
+
 	if wt.Insights.SessionID != "" {
 		args := append([]string{"--resume", wt.Insights.SessionID}, baseArgs...)
-		fmt.Fprintf(os.Stderr, "\n  \033[0;90m%s\033[0m\n\n", "claude "+strings.Join(args, " "))
 		cmd := exec.Command(claudePath, args...)
 		cmd.Dir = wt.Path
 		cmd.Stdin = os.Stdin
@@ -43,7 +45,6 @@ func LaunchClaude(wt Worktree) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\n  \033[0;90m%s\033[0m\n\n", "claude "+strings.Join(baseArgs, " "))
 	cmd := exec.Command(claudePath, baseArgs...)
 	cmd.Dir = wt.Path
 	cmd.Stdin = os.Stdin

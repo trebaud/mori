@@ -63,7 +63,7 @@ func Create(opts CreateOptions) error {
 			return nil
 		}
 
-		args := []string{"--tmux"}
+		args := []string{"--tmux=classic"}
 		if branch != result.BaseBranch {
 			args = append(args, "--worktree", filepath.Base(result.Dir))
 		}

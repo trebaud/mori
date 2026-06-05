@@ -25,6 +25,10 @@ import (
 func Run(worktrees []internal.Worktree) {
 	DetectAndApplyTheme()
 	for {
+		// Wipe the screen (and scrollback) so leftover output from a previous
+		// claude/tmux session doesn't pile up behind the TUI across re-entries.
+		fmt.Fprint(os.Stdout, "\033[H\033[2J\033[3J")
+
 		currentBranch := git.CurrentBranch()
 
 		if refreshed, err := internal.List(); err == nil {

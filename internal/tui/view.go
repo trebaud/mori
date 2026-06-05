@@ -1367,7 +1367,7 @@ func (m model) viewHelp(width int) string {
 			{"ctrl+d/u", "half-page down / up"},
 			{"w", "jump to next working/waiting"},
 			{"enter, o", "open claude (attaches bg session if one exists)"},
-			{"ctrl+z", "detach from claude — leaves the bg session running"},
+			{"ctrl+b d", "detach from claude — leaves the bg session running"},
 			{"tab, i", "toggle insights panel"},
 			{"1-5", "switch insights tab (overview/activity/git/todos/cost)"},
 			{"[ / ]", "scroll insights up / down"},
