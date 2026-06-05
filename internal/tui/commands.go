@@ -13,7 +13,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/trebaud/mori/internal"
-	"github.com/trebaud/mori/internal/bg"
 	"github.com/trebaud/mori/internal/git"
 	"github.com/trebaud/mori/internal/github"
 )
@@ -145,36 +144,12 @@ func removeWorktreeCmd(path string, force bool) tea.Cmd {
 	}
 }
 
-// launchAgentCmd dispatches a new Claude Code background session in the
-// worktree via `claude --bg`. The session is hosted by Claude's supervisor
-// process — once dispatched it survives mori restarts and we drive everything
-// (status, peek, attach) through ~/.claude/jobs/<id>/state.json and the
-// claude logs/attach subcommands.
-func launchAgentCmd(wt internal.Worktree, text string) tea.Cmd {
-	return func() tea.Msg {
-		id, err := bg.Launch("", wt.Path, text, "--dangerously-skip-permissions")
-		if err != nil {
-			return messageSentMsg{err: err}
-		}
-		return messageSentMsg{bgID: id}
-	}
-}
-
 // openPRInBrowserCmd shells out to `gh pr view --web` without blocking the TUI.
 // The status bar reflects success/failure via a follow-up tick; for simplicity
 // we don't surface gh errors back into the model.
 func openPRInBrowserCmd(number int) tea.Cmd {
 	return func() tea.Msg {
 		_ = exec.Command("gh", "pr", "view", "--web", fmt.Sprintf("%d", number)).Start()
-		return nil
-	}
-}
-
-// stopBgSessionCmd terminates a `claude --bg` session by id and forces an
-// immediate insights refresh on the next tick.
-func stopBgSessionCmd(id string) tea.Cmd {
-	return func() tea.Msg {
-		_ = bg.Stop("", id)
 		return nil
 	}
 }

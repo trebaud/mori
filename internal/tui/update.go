@@ -18,12 +18,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.messageInput.SetWidth(m.messageInputWidth())
 		m.adjustScroll()
 		return m, nil
 
 	case time.Time:
-		m.refreshBgSessions()
 		m.refreshInsights()
 		m.applyFilter()
 		if m.hasActiveAgent() {
@@ -98,30 +96,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case messageSentMsg:
-		if msg.err != nil {
-			m.statusMsg = &statusMsg{text: "launch failed: " + msg.err.Error(), isError: true, expires: time.Now().Add(statusErrorDuration)}
-			return m, nil
-		}
-		text := "agent dispatched"
-		if msg.bgID != "" {
-			text = "bg " + msg.bgID + " · [enter] attach  (ctrl+z to detach without stopping)"
-		}
-		m.statusMsg = &statusMsg{text: text, expires: time.Now().Add(statusInfoDuration)}
-		m.agentLaunchedAt = time.Now()
-		// Kick an immediate fast tick so insights and log update right away.
-		return m, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return t })
-
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
-
-	case tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
-		if m.mode == modeMessage {
-			var cmd tea.Cmd
-			m.messageInput, cmd = m.messageInput.Update(msg)
-			return m, cmd
-		}
-		return m, nil
 	}
 	return m, nil
 }
@@ -140,8 +116,6 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleCreatingKey(key)
 	case modeConfirmDelete:
 		return m.handleDeleteKey(key)
-	case modeMessage:
-		return m.handleMessageKey(msg, key)
 	default:
 		return m.handleNormalKey(key)
 	}
@@ -277,16 +251,6 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 				return m, tea.SetClipboard(wt.Insights.LogPath)
 			}
 		}
-	case "K":
-		if m.showInsights {
-			if wt := m.selectedWorktree(); wt != nil {
-				if sess := m.bgSession(wt.Path); sess != nil {
-					m.statusMsg = loadingStatus("stopping bg session…")
-					return m, stopBgSessionCmd(sess.ID)
-				}
-				m.statusMsg = errorStatus("no bg session to stop")
-			}
-		}
 	case "?":
 		m.showHelp = !m.showHelp
 	case "/":
@@ -335,14 +299,6 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.statusMsg = infoStatus("no active worktrees")
-		}
-
-	case "m":
-		if m.selectedWorktree() != nil {
-			m.mode = modeMessage
-			m.messageInput.Reset()
-			m.messageInput.SetWidth(m.messageInputWidth())
-			return m, m.messageInput.Focus()
 		}
 
 	case "x":
@@ -451,38 +407,6 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 	}
 	return m, nil
-}
-
-func (m model) handleMessageKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "ctrl+c":
-		return m, tea.Quit
-	case "esc":
-		m.mode = modeNormal
-		m.messageInput.Blur()
-		return m, nil
-	case "enter":
-		text := strings.TrimSpace(m.messageInput.Value())
-		if text == "" {
-			m.mode = modeNormal
-			m.messageInput.Blur()
-			return m, nil
-		}
-		wt := m.selectedWorktree()
-		if wt == nil {
-			m.mode = modeNormal
-			m.messageInput.Blur()
-			return m, nil
-		}
-		m.mode = modeNormal
-		m.messageInput.Blur()
-		m.statusMsg = loadingStatus("launching agent…")
-		return m, launchAgentCmd(*wt, text)
-	}
-
-	var cmd tea.Cmd
-	m.messageInput, cmd = m.messageInput.Update(msg)
-	return m, cmd
 }
 
 // --- Status-message constructors ---

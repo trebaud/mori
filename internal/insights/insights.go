@@ -189,6 +189,15 @@ func buildInsights(worktreePath, file string, modTime time.Time, headRef string)
 
 	parsed := scanSession(file)
 
+	// A session reads as WORKING when its last turn is a user message — i.e. the
+	// agent is mid-response. But a live agent appends to its JSONL continuously,
+	// so if the file hasn't changed in a while the session was abandoned (the
+	// user quit before the agent replied) and we'd otherwise show WORKING
+	// forever. Downgrade stale WORKING sessions to IDLE.
+	if parsed.status == StatusWorking && time.Since(modTime) > workingStaleAfter {
+		parsed.status = StatusIdle
+	}
+
 	// Token sample ring buffer: append latest tokens to the previous cache.
 	var samples []int
 	if prev := cache[worktreePath]; prev != nil {
@@ -275,6 +284,12 @@ type sessionData struct {
 }
 
 const maxScanBytes = 10 * 1024 * 1024 // 10 MB tail limit for large session files
+
+// workingStaleAfter is how long a session can sit on a trailing user turn
+// before we stop treating it as WORKING. Time-to-first-token after a prompt is
+// seconds even with extended thinking, so anything older is an abandoned
+// session rather than a live one.
+const workingStaleAfter = 5 * time.Minute
 
 func scanSession(path string) sessionData {
 	file, err := os.Open(path)

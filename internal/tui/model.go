@@ -6,12 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/trebaud/mori/internal"
-	"github.com/trebaud/mori/internal/bg"
 	"github.com/trebaud/mori/internal/insights"
 )
 
@@ -25,7 +23,6 @@ const (
 	modeCreate
 	modeCreating
 	modeConfirmDelete
-	modeMessage
 )
 
 type stepState int
@@ -123,11 +120,6 @@ type worktreeRemovedMsg struct {
 	err error
 }
 
-type messageSentMsg struct {
-	err  error
-	bgID string
-}
-
 // --- Model (Elm: Model) ---
 
 type model struct {
@@ -142,10 +134,9 @@ type model struct {
 	showHelp      bool
 	tick          time.Time
 
-	mode         inputMode
-	textInput    textinput.Model
-	messageInput textarea.Model
-	statusMsg    *statusMsg
+	mode      inputMode
+	textInput textinput.Model
+	statusMsg *statusMsg
 
 	sortMode     sortMode
 	statusFilter statusFilter
@@ -162,9 +153,6 @@ type model struct {
 	missingTools         []string
 
 	animFrame int
-
-	agentLaunchedAt time.Time              // non-zero while we want fast ticks after a launch
-	bgSessions      map[string]*bg.Session // worktree path → most relevant claude --bg session (refreshed per tick)
 
 	creatingBranch string
 	creatingSteps  []creatingStep
@@ -193,7 +181,6 @@ func newModel(worktrees []internal.Worktree, currentBranch string) model {
 		currentBranch: currentBranch,
 		tick:          time.Now(),
 		textInput:     ti,
-		messageInput:  newMessageTextarea(),
 		mode:          modeNormal,
 		sortMode:      sortDefault,
 		archived:      loadArchived(),
@@ -218,57 +205,19 @@ func (m model) hasActiveAgent() bool {
 		if wt.Insights.Status == insights.StatusWorking {
 			return true
 		}
-		if s := m.bgSessions[wt.Path]; s != nil && s.Working() {
-			return true
-		}
 	}
 	return false
-}
-
-// bgSession returns the claude --bg session attached to the worktree at path,
-// or nil. Nil-safe so callers can chain it.
-func (m model) bgSession(path string) *bg.Session {
-	if m.bgSessions == nil {
-		return nil
-	}
-	return m.bgSessions[path]
-}
-
-// refreshBgSessions scans ~/.claude/jobs/ once per tick and rebuilds the
-// worktree-path → session map used for the working/wait/idle overlay, the
-// peek panel, and the attach-on-open flow.
-func (m *model) refreshBgSessions() {
-	paths := make([]string, 0, len(m.worktrees))
-	for _, wt := range m.worktrees {
-		paths = append(paths, wt.Path)
-	}
-	m.bgSessions = bg.ByCwd(paths)
 }
 
 func (m model) tickInterval() time.Duration {
 	if m.hasActiveAgent() {
 		return tickFast
 	}
-	// Stay fast within 60s of launching an agent so the status pill updates
-	// promptly even before insights detect WORKING.
-	if !m.agentLaunchedAt.IsZero() && time.Since(m.agentLaunchedAt) < 60*time.Second {
-		return tickFast
-	}
 	return tickSlow
 }
 
-// effectiveStatus returns the display status for a worktree. Live bg sessions
-// take precedence over the insights-derived status because the supervisor's
-// state machine is more authoritative than what we can derive from JSONL.
+// effectiveStatus returns the display status for a worktree.
 func (m model) effectiveStatus(wt internal.Worktree) insights.StatusType {
-	if s := m.bgSession(wt.Path); s != nil && s.Live() {
-		switch {
-		case s.NeedsInput():
-			return insights.StatusWait
-		case s.Working():
-			return insights.StatusWorking
-		}
-	}
 	return wt.Insights.Status
 }
 
@@ -277,22 +226,6 @@ func (m model) selectedWorktree() *internal.Worktree {
 		return &m.worktrees[m.filtered[m.cursor]]
 	}
 	return nil
-}
-
-// messageInputWidth returns the inner width for the prompt textarea so it fits inside its framed card.
-func (m model) messageInputWidth() int {
-	total := m.width
-	if total == 0 {
-		total = 80
-	}
-	cardW := total - 4
-	if cardW > 100 {
-		cardW = 100
-	}
-	if cardW < 30 {
-		cardW = 30
-	}
-	return cardW - 4
 }
 
 // listInnerHeight is the fixed inner row count of the worktree-list frame. It
@@ -304,8 +237,8 @@ func (m model) listInnerHeight() int {
 		return 12
 	}
 	// Reserved rows: top blank + topbar + blank + frame top + frame bottom +
-	// nyan banner + status line + footer + trailing newline = 9.
-	const reserved = 9
+	// status line + footer + trailing newline = 8.
+	const reserved = 8
 	h := m.height - reserved
 	if minH := m.height / 2; h < minH {
 		h = minH
