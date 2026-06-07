@@ -8,7 +8,7 @@
 
 A TUI for managing git worktrees with Claude Code agent insights.
 
-![Mori TUI](https://github.com/user-attachments/assets/5384c293-4654-49fa-84bb-b7cfcfce5385)
+![Mori demo](assets/demo.gif)
 
 ## Why
 
