@@ -29,6 +29,8 @@ var (
 	dimStyle      lipgloss.Style
 	headingStyle  lipgloss.Style
 	selectedStyle lipgloss.Style
+	keyStyle      lipgloss.Style
+	rowStyle      lipgloss.Style
 
 	dirtyStyle lipgloss.Style
 	cleanStyle lipgloss.Style
@@ -62,6 +64,14 @@ func ApplyTheme(isDark bool) {
 	dimStyle = lipgloss.NewStyle().Faint(true)
 	headingStyle = lipgloss.NewStyle().Foreground(colMuted).Bold(true)
 	selectedStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+
+	// Key hints read as "key, then what it does": the key sits at the
+	// terminal's own foreground while its label stays muted.
+	keyStyle = lipgloss.NewStyle().Foreground(colText)
+	// The tint behind the selected card. It carries no foreground of its
+	// own — every span on a selected row layers this background under its
+	// usual color.
+	rowStyle = lipgloss.NewStyle().Background(colRowBg)
 
 	// A worktree with uncommitted work is the one that needs attention.
 	dirtyStyle = lipgloss.NewStyle().Foreground(colWarn)

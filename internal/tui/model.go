@@ -17,7 +17,10 @@ const (
 	chromeHeight  = 6 // blank, top bar, blank, status line, footer, trailing
 	minViewWidth  = 44
 	minViewHeight = 12
-	refreshEvery  = 15 * time.Second
+	// maxContentWidth caps how wide the layout grows. Past it the two columns
+	// of a card sit too far apart to read as one row.
+	maxContentWidth = 100
+	refreshEvery    = 15 * time.Second
 )
 
 // Status-message bucket durations.

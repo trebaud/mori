@@ -49,6 +49,13 @@ func truncate(s string, w int) string {
 // the two cannot both fit, right is dropped — it always carries the secondary
 // information. Callers must pass a left that fits on its own.
 func padBetween(left, right string, width int) string {
+	return padBetweenFill(left, right, width, lipgloss.NewStyle())
+}
+
+// padBetweenFill is padBetween with the margins and the gap drawn in fill.
+// A tinted row has to paint its own whitespace, or the background shows
+// through as a gap between the two columns.
+func padBetweenFill(left, right string, width int, fill lipgloss.Style) string {
 	inner := width - 2
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	if rw > 0 && lw+rw+1 > inner {
@@ -58,7 +65,58 @@ func padBetween(left, right string, width int) string {
 	if gap < 1 {
 		gap = 1
 	}
-	return " " + left + strings.Repeat(" ", gap) + right + " "
+	return fill.Render(" ") + left + fill.Render(strings.Repeat(" ", gap)) + right + fill.Render(" ")
+}
+
+// rule draws the hairline that separates the header from the list.
+func rule(width int) string {
+	if width < 3 {
+		return ""
+	}
+	return " " + borderStyle.Render(strings.Repeat("─", width-2)) + " "
+}
+
+// --- Key hints ---
+
+// keyHint is one "[k] label" pair in a footer or a card's action row.
+type keyHint struct{ key, label string }
+
+// hintsWidth is the rendered width of a hint row, measured on the plain text.
+func hintsWidth(hints []keyHint) int {
+	w := 0
+	for i, h := range hints {
+		if i > 0 {
+			w += 2
+		}
+		// "[" + key + "]" + " " + label
+		w += lipgloss.Width(h.key) + lipgloss.Width(h.label) + 4
+	}
+	return w
+}
+
+// renderHints draws a hint row, keys in the foreground and labels muted so the
+// keys are what the eye lands on.
+func renderHints(hints []keyHint) string {
+	var b strings.Builder
+	for i, h := range hints {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		b.WriteString(dimStyle.Render("[") + keyStyle.Render(h.key) + dimStyle.Render("]") +
+			" " + mutedStyle.Render(h.label))
+	}
+	return b.String()
+}
+
+// firstHintsThatFit picks the first hint row no wider than width, falling back
+// to the last (shortest) candidate. Used to shed hints on narrow terminals.
+func firstHintsThatFit(width int, sets ...[]keyHint) []keyHint {
+	for _, s := range sets {
+		if hintsWidth(s) <= width {
+			return s
+		}
+	}
+	return sets[len(sets)-1]
 }
 
 // firstThatFits returns the first candidate no wider than width, or the last

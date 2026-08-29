@@ -25,6 +25,11 @@ func (m model) View() tea.View {
 		return v
 	}
 
+	// Past maxContentWidth a card's branch name and its age drift to opposite
+	// ends of the screen with a void between them, so the layout stops growing
+	// and stays left-aligned in the terminal.
+	width = min(width, maxContentWidth)
+
 	base := m.viewList(width)
 	if m.showHelp {
 		base = m.viewHelp(width)
@@ -57,7 +62,7 @@ func (m model) viewTooSmall() string {
 // --- Base layout ---
 
 func (m model) viewList(width int) string {
-	lines := []string{"", m.renderTopBar(width), ""}
+	lines := []string{"", m.renderTopBar(width), rule(width)}
 	lines = append(lines, m.renderCards(width)...)
 	lines = append(lines, m.renderStatusLine(), m.renderFooter(width))
 	return strings.Join(lines, "\n")
@@ -89,7 +94,7 @@ func (m model) renderCards(width int) []string {
 	var lines []string
 
 	if len(m.filtered) == 0 {
-		lines = append(lines, "", "  "+mutedStyle.Render(m.emptyMessage()))
+		lines = append(lines, m.renderEmpty(height)...)
 	} else {
 		end := min(m.scrollOffset+m.visibleCards(), len(m.filtered))
 		for i := m.scrollOffset; i < end; i++ {
@@ -120,11 +125,53 @@ func scrollHint(above, below int) string {
 	return strings.Join(parts, " · ")
 }
 
-func (m model) emptyMessage() string {
+// renderEmpty draws the empty state a third of the way down the list area,
+// where the eye already is, rather than pinned under the header.
+func (m model) renderEmpty(height int) []string {
+	msg, hint := "no worktrees yet", []keyHint{{"n", "create one"}}
 	if m.textInput.Value() != "" {
-		return "no worktrees match “" + m.textInput.Value() + "”"
+		msg = "no worktrees match “" + m.textInput.Value() + "”"
+		hint = []keyHint{{"esc", "clear the filter"}}
 	}
-	return "no worktrees yet — press [n] to create one"
+
+	lines := make([]string, 0, height)
+	for i := 0; i < max(0, (height-2)/3); i++ {
+		lines = append(lines, "")
+	}
+	return append(lines, "  "+mutedStyle.Render(msg), "", "  "+renderHints(hint))
+}
+
+// cardStyles is the style set one card draws with. The selected card lays a
+// faint tint under its whole row, and a background only covers what a style
+// actually paints — so every span, separator and run of padding on the row has
+// to come from this set, or the tint comes out full of holes.
+type cardStyles struct {
+	name, path, meta, head, dirty, clean, fill lipgloss.Style
+}
+
+func newCardStyles(selected bool) cardStyles {
+	cs := cardStyles{
+		name:  textStyle,
+		path:  mutedStyle,
+		meta:  mutedStyle,
+		head:  dimStyle,
+		dirty: dirtyStyle,
+		clean: cleanStyle,
+		fill:  lipgloss.NewStyle(),
+	}
+	if !selected {
+		return cs
+	}
+
+	tint := func(st lipgloss.Style) lipgloss.Style { return st.Background(colRowBg) }
+	cs.name = tint(cs.name.Bold(true))
+	cs.path = tint(cs.path)
+	cs.meta = tint(cs.meta)
+	cs.head = tint(cs.head)
+	cs.dirty = tint(cs.dirty)
+	cs.clean = tint(cs.clean)
+	cs.fill = rowStyle
+	return cs
 }
 
 // renderCard draws one worktree as three rows plus a trailing blank row:
@@ -135,17 +182,14 @@ func (m model) emptyMessage() string {
 func (m model) renderCard(idx, width int) []string {
 	wt := m.worktrees[m.filtered[idx]]
 	selected := idx == m.cursor
+	cs := newCardStyles(selected)
 
-	// The accent bar is the only selection marker, so it spans all three rows.
-	bar, cont := "  ", "  "
+	// The accent bar carries the selection down all three rows; the tint
+	// behind it is what makes the card read as one block.
+	bar, cont := cs.fill.Render("  "), cs.fill.Render("  ")
 	if selected {
-		bar = selectedStyle.Render("▌") + " "
-		cont = selectedStyle.Render("│") + " "
-	}
-
-	nameStyle := textStyle
-	if selected {
-		nameStyle = lipgloss.NewStyle().Foreground(colText).Bold(true)
+		bar = selectedStyle.Background(colRowBg).Render("▌") + cs.fill.Render(" ")
+		cont = selectedStyle.Background(colRowBg).Render("│") + cs.fill.Render(" ")
 	}
 
 	label := wt.Label()
@@ -153,23 +197,26 @@ func (m model) renderCard(idx, width int) []string {
 		label = "◌ " + label
 	}
 
-	// Both rows end at the same column so the age and HEAD line up down the
-	// list: the bar costs 2 columns on row 1 and 3 on rows 2 and 3, and
-	// padBetween adds a one-column margin on each side.
+	// Every row is padded to the full width so the tint runs edge to edge, and
+	// so the age and HEAD line up down the list: the bar costs 2 columns on row
+	// 1 and 3 on rows 2 and 3, and padBetween adds a margin on each side.
 	age := relativeTime(wt.LastCommit)
 	labelW := width - 4 - lipgloss.Width(age) - 1
-	first := bar + padBetween(nameStyle.Render(truncate(label, labelW)), mutedStyle.Render(age), width-2)
+	first := bar + padBetweenFill(
+		cs.name.Render(truncate(label, labelW)), cs.meta.Render(age), width-2, cs.fill)
 
 	pathW := width - 5 - lipgloss.Width(wt.Head) - 1
-	second := cont + " " + padBetween(mutedStyle.Render(truncate(wt.DisplayPath, pathW)), dimStyle.Render(wt.Head), width-3)
+	second := cont + cs.fill.Render(" ") + padBetweenFill(
+		cs.path.Render(truncate(wt.DisplayPath, pathW)), cs.head.Render(wt.Head), width-3, cs.fill)
 
-	third := cont + "  " + m.renderGitState(wt)
+	third := cont + cs.fill.Render(" ") + padBetweenFill(
+		m.renderGitState(wt, cs), "", width-3, cs.fill)
 
 	return []string{first, second, third, ""}
 }
 
 // renderGitState is the "● 3 files changed · 2 ahead" line of a card.
-func (m model) renderGitState(wt internal.Worktree) string {
+func (m model) renderGitState(wt internal.Worktree, cs cardStyles) string {
 	var parts []string
 
 	if wt.Dirty > 0 {
@@ -177,22 +224,22 @@ func (m model) renderGitState(wt internal.Worktree) string {
 		if wt.Dirty == 1 {
 			noun = "file"
 		}
-		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("● %d %s changed", wt.Dirty, noun)))
+		parts = append(parts, cs.dirty.Render(fmt.Sprintf("● %d %s changed", wt.Dirty, noun)))
 	} else {
-		parts = append(parts, cleanStyle.Render("○ clean"))
+		parts = append(parts, cs.clean.Render("○ clean"))
 	}
 
 	switch {
 	case wt.Ahead > 0 && wt.Behind > 0:
-		parts = append(parts, mutedStyle.Render(fmt.Sprintf("%d ahead", wt.Ahead)),
-			mutedStyle.Render(fmt.Sprintf("%d behind", wt.Behind)))
+		parts = append(parts, cs.meta.Render(fmt.Sprintf("%d ahead", wt.Ahead)),
+			cs.meta.Render(fmt.Sprintf("%d behind", wt.Behind)))
 	case wt.Ahead > 0:
-		parts = append(parts, mutedStyle.Render(fmt.Sprintf("%d ahead", wt.Ahead)))
+		parts = append(parts, cs.meta.Render(fmt.Sprintf("%d ahead", wt.Ahead)))
 	case wt.Behind > 0:
-		parts = append(parts, mutedStyle.Render(fmt.Sprintf("%d behind", wt.Behind)))
+		parts = append(parts, cs.meta.Render(fmt.Sprintf("%d behind", wt.Behind)))
 	}
 
-	return strings.Join(parts, mutedStyle.Render(" · "))
+	return strings.Join(parts, cs.meta.Render(" · "))
 }
 
 // renderStatusLine is the single row between the list and the footer. It holds
@@ -216,17 +263,17 @@ func (m model) renderStatusLine() string {
 
 func (m model) renderFooter(width int) string {
 	if m.mode == modeSearch {
-		return " " + mutedStyle.Render(firstThatFits(width-2,
-			"[enter] apply  [esc] clear  [↑/↓] navigate",
-			"[enter] apply  [esc] clear",
-			"[esc] clear"))
+		return " " + renderHints(firstHintsThatFit(width-2,
+			[]keyHint{{"enter", "apply"}, {"esc", "clear"}, {"↑/↓", "navigate"}},
+			[]keyHint{{"enter", "apply"}, {"esc", "clear"}},
+			[]keyHint{{"esc", "clear"}}))
 	}
 
-	left := mutedStyle.Render(firstThatFits(width-2,
-		"[enter] cd  [n] new  [d] delete  [/] filter  [?] help  [q] quit",
-		"[enter] cd  [n] new  [d] delete  [?] help  [q] quit",
-		"[enter] cd  [n] new  [?] help  [q] quit",
-		"[?] help  [q] quit"))
+	left := renderHints(firstHintsThatFit(width-2,
+		[]keyHint{{"enter", "cd"}, {"n", "new"}, {"d", "delete"}, {"/", "filter"}, {"?", "help"}, {"q", "quit"}},
+		[]keyHint{{"enter", "cd"}, {"n", "new"}, {"d", "delete"}, {"?", "help"}, {"q", "quit"}},
+		[]keyHint{{"enter", "cd"}, {"n", "new"}, {"?", "help"}, {"q", "quit"}},
+		[]keyHint{{"?", "help"}, {"q", "quit"}}))
 
 	var indicators []string
 	if m.sortMode != internal.SortDefault {
@@ -264,7 +311,7 @@ func (m model) renderCreateCard(width int) string {
 	c.WriteString(" " + titleStyle.Render("›") + "  " + m.textInput.View() + "\n\n")
 	c.WriteString(" " + dimStyle.Render("branches off ") + mutedStyle.Render(m.baseBranch) + "\n")
 	c.WriteString(" " + dimStyle.Render("leave empty for a random name") + "\n\n")
-	c.WriteString(" " + mutedStyle.Render("[enter] create   [esc] cancel") + "\n")
+	c.WriteString(" " + renderHints([]keyHint{{"enter", "create"}, {"esc", "cancel"}}) + "\n")
 
 	return renderFrame(c.String(), w, "new worktree")
 }
@@ -333,7 +380,7 @@ func (m model) renderDeleteCard(width int) string {
 		c.WriteString("\n")
 	}
 
-	c.WriteString(" " + mutedStyle.Render("[y] delete   [esc] cancel") + "\n")
+	c.WriteString(" " + renderHints([]keyHint{{"y", "delete"}, {"esc", "cancel"}}) + "\n")
 
 	return renderFrame(c.String(), w, "delete worktree")
 }
@@ -389,6 +436,6 @@ func (m model) viewHelp(width int) string {
 		"",
 		renderFrame(c.String(), w, "keybindings"),
 		"",
-		" " + mutedStyle.Render("[?] close   [q] quit"),
+		" " + renderHints([]keyHint{{"?", "close"}, {"q", "quit"}}),
 	}, "\n")
 }
