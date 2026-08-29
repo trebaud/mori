@@ -8,12 +8,20 @@ import (
 	"github.com/trebaud/mori/internal/tui"
 )
 
-func Select() {
+// Select launches the TUI and prints the picked worktree path on stdout, so
+// `cd "$(mori)"` lands the user in that worktree.
+func Select() error {
 	worktrees, err := internal.List()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
-	tui.Run(worktrees)
+	path, err := tui.Run(worktrees)
+	if err != nil {
+		return err
+	}
+	if path != "" {
+		fmt.Fprintln(os.Stdout, path)
+	}
+	return nil
 }

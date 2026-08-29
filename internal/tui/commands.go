@@ -4,50 +4,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/trebaud/mori/internal"
 	"github.com/trebaud/mori/internal/git"
-	"github.com/trebaud/mori/internal/github"
 )
 
-// prFetchedMsg is emitted by fetchPRCmd once a gh fetch completes.
-type prFetchedMsg struct {
-	branch string
-	info   *github.PRInfo
-}
-
-func fetchPRCmd(branch string) tea.Cmd {
-	return func() tea.Msg {
-		info, _ := github.Refresh(branch)
-		return prFetchedMsg{branch: branch, info: info}
-	}
-}
-
-func fetchAllPRsCmd(wts []internal.Worktree) tea.Cmd {
-	if !github.IsAvailable() {
-		return nil
-	}
-	var cmds []tea.Cmd
-	for _, wt := range wts {
-		if wt.IsMain || wt.Branch == "" {
-			continue
-		}
-		cmds = append(cmds, fetchPRCmd(wt.Branch))
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
-}
-
 // --- Effects (Elm: Cmd) ---
+
+// tickCmd schedules the next background refresh beat.
+func tickCmd() tea.Cmd {
+	return tea.Tick(refreshEvery, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// refreshCmd re-queries git off the UI goroutine.
+func refreshCmd() tea.Cmd {
+	return func() tea.Msg {
+		wts, err := internal.List()
+		return refreshedMsg{worktrees: wts, err: err}
+	}
+}
 
 // stepStartedMsg fires when a creation step begins running.
 type stepStartedMsg struct{ name string }
@@ -58,44 +38,41 @@ type stepCompletedMsg struct {
 	success bool
 }
 
-// spinnerTickMsg drives the spinner animation while the creating overlay is open.
+// spinnerTickMsg drives the spinner while the creating overlay is open.
 type spinnerTickMsg struct{}
 
-// planCreateSteps returns the list of steps that CreateWorktree will perform,
-// pre-populated so the overlay can show the full plan up front.
+// planCreateSteps returns the steps CreateWorktree will perform, pre-populated
+// so the overlay can show the whole plan up front.
 func planCreateSteps(repoRoot, branch string) []creatingStep {
 	baseBranch := git.DefaultBranch(repoRoot)
-	dir := internal.WorktreeDir(repoRoot, branch)
-	relDir := strings.TrimPrefix(dir, repoRoot+"/")
+	dir := internal.TildePath(internal.WorktreeDir(repoRoot, branch))
 
 	steps := []creatingStep{{
 		name:  "Creating branch from " + baseBranch,
-		cmd:   fmt.Sprintf("git worktree add %s -b %s %s", relDir, branch, baseBranch),
+		cmd:   fmt.Sprintf("git worktree add %s -b %s %s", dir, branch, baseBranch),
 		state: stepPending,
 	}}
 
-	cfg := internal.Load(repoRoot)
-	for _, st := range cfg.PostCreate {
+	for _, st := range internal.Load(repoRoot).PostCreate {
 		steps = append(steps, creatingStep{name: st.Name, cmd: st.Cmd, state: stepPending})
 	}
 	return steps
 }
 
 // startCreateWorktreeCmd kicks off worktree creation in a goroutine, streaming
-// per-step progress over a channel. The returned channel is read one message at
-// a time by waitStepCmd; the returned tea.Cmd reads the first message.
+// per-step progress over a channel. The returned channel is drained one message
+// at a time by waitStepCmd; the returned tea.Cmd reads the first message.
 func startCreateWorktreeCmd(branch string) (chan tea.Msg, tea.Cmd) {
 	ch := make(chan tea.Msg, 64)
 	go func() {
 		defer close(ch)
-		repoRoot := findRepoRoot()
 
 		cb := &internal.HookCallbacks{
 			OnStart:    func(name string) { ch <- stepStartedMsg{name: name} },
 			OnComplete: func(name string, success bool) { ch <- stepCompletedMsg{name: name, success: success} },
 		}
 
-		result, err := internal.CreateWorktree(repoRoot, branch, cb)
+		result, err := internal.CreateWorktree(findRepoRoot(), branch, cb)
 		if err != nil {
 			ch <- worktreeCreatedMsg{err: err}
 			return
@@ -112,8 +89,8 @@ func startCreateWorktreeCmd(branch string) (chan tea.Msg, tea.Cmd) {
 	return ch, waitStepCmd(ch)
 }
 
-// waitStepCmd reads one message from the streaming channel. The Update function
-// re-issues this cmd after each message until the channel is closed.
+// waitStepCmd reads one message from the streaming channel. Update re-issues it
+// after each message until the channel closes.
 func waitStepCmd(ch chan tea.Msg) tea.Cmd {
 	if ch == nil {
 		return nil
@@ -129,28 +106,13 @@ func waitStepCmd(ch chan tea.Msg) tea.Cmd {
 
 // spinnerTickCmd schedules the next spinner frame.
 func spinnerTickCmd() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg {
-		return spinnerTickMsg{}
-	})
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
 }
 
 // removeWorktreeCmd removes a worktree and emits worktreeRemovedMsg.
 func removeWorktreeCmd(path string, force bool) tea.Cmd {
 	return func() tea.Msg {
-		if err := internal.RemoveWorktree(path, force); err != nil {
-			return worktreeRemovedMsg{err: err}
-		}
-		return worktreeRemovedMsg{}
-	}
-}
-
-// openPRInBrowserCmd shells out to `gh pr view --web` without blocking the TUI.
-// The status bar reflects success/failure via a follow-up tick; for simplicity
-// we don't surface gh errors back into the model.
-func openPRInBrowserCmd(number int) tea.Cmd {
-	return func() tea.Msg {
-		_ = exec.Command("gh", "pr", "view", "--web", fmt.Sprintf("%d", number)).Start()
-		return nil
+		return worktreeRemovedMsg{err: internal.RemoveWorktree(path, force)}
 	}
 }
 
@@ -165,8 +127,7 @@ func findRepoRoot() string {
 // --- Archive persistence ---
 
 func archivePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".mori", "archived.json")
+	return filepath.Join(internal.MoriHome(), "archived.json")
 }
 
 func loadArchived() map[string]bool {
@@ -186,12 +147,12 @@ func loadArchived() map[string]bool {
 }
 
 func saveArchived(m map[string]bool) {
-	var branches []string
+	branches := make([]string, 0, len(m))
 	for b := range m {
 		branches = append(branches, b)
 	}
 	sort.Strings(branches)
 	data, _ := json.Marshal(branches)
-	os.MkdirAll(filepath.Dir(archivePath()), 0755)
-	os.WriteFile(archivePath(), data, 0644)
+	os.MkdirAll(filepath.Dir(archivePath()), 0o755)
+	os.WriteFile(archivePath(), data, 0o644)
 }

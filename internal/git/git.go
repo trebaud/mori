@@ -1,3 +1,4 @@
+// Package git wraps the git CLI with the small set of queries mori needs.
 package git
 
 import (
@@ -5,8 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // IsRepo returns true if path contains a .git directory (not a worktree .git file).
@@ -24,9 +27,8 @@ func FindMainRepo(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("not a git repository: %w", err)
 	}
-	gitCommon := strings.TrimSpace(string(out))
-	// --git-common-dir returns the .git directory; the repo root is its parent
-	return filepath.Dir(gitCommon), nil
+	// --git-common-dir returns the .git directory; the repo root is its parent.
+	return filepath.Dir(strings.TrimSpace(string(out))), nil
 }
 
 var (
@@ -34,16 +36,16 @@ var (
 	defaultBranchCache = make(map[string]string)
 )
 
-// DefaultBranch returns the repository's default branch name (e.g. "main" or "master")
-// by checking origin/HEAD, then probing for common branch names.
+// DefaultBranch returns the repository's default branch name (e.g. "main" or
+// "master") by checking origin/HEAD, then probing for common branch names.
 // Results are cached per repo path for the lifetime of the process.
 func DefaultBranch(repo string) string {
 	defaultBranchMu.RLock()
-	if cached, ok := defaultBranchCache[repo]; ok {
-		defaultBranchMu.RUnlock()
+	cached, ok := defaultBranchCache[repo]
+	defaultBranchMu.RUnlock()
+	if ok {
 		return cached
 	}
-	defaultBranchMu.RUnlock()
 
 	branch := defaultBranchUncached(repo)
 
@@ -69,34 +71,7 @@ func defaultBranchUncached(repo string) string {
 	return "main"
 }
 
-// Log returns the last n commit summaries for the given repo path.
-// When on a non-default branch, only shows commits unique to that branch.
-func Log(repoPath string, n int) []string {
-	args := []string{"-C", repoPath, "log", "--oneline",
-		"--pretty=format:%ar: %s", "-n", fmt.Sprintf("%d", n)}
-
-	// If we're on a feature branch, only show commits not on the default branch.
-	mainBranch := DefaultBranch(repoPath)
-	currentOut, err := exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD").Output()
-	if err == nil {
-		current := strings.TrimSpace(string(currentOut))
-		if current != mainBranch && current != "" && current != "HEAD" {
-			args = append(args, mainBranch+"..HEAD")
-		}
-	}
-
-	out, err := exec.Command("git", args...).Output()
-	if err != nil {
-		return nil
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return nil
-	}
-	return lines
-}
-
-// CurrentBranch returns the current branch name for the working directory.
+// CurrentBranch returns the branch name for the working directory.
 func CurrentBranch() string {
 	out, err := exec.Command("git", "branch", "--show-current").Output()
 	if err != nil {
@@ -106,8 +81,8 @@ func CurrentBranch() string {
 }
 
 // WorktreeList returns the raw porcelain output of git worktree list.
-func WorktreeList() (string, error) {
-	out, err := exec.Command("git", "worktree", "list", "--porcelain").Output()
+func WorktreeList(repo string) (string, error) {
+	out, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		return "", err
 	}
@@ -127,8 +102,7 @@ func HasCommits(repo string) (bool, error) {
 func AddWorktree(repo, dir, branch, baseBranch string) error {
 	cmd := exec.Command("git", "-C", repo, "worktree", "add", dir, "-b", branch, baseBranch)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg != "" {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
 			return fmt.Errorf("%s", msg)
 		}
 		return err
@@ -143,83 +117,56 @@ func RemoveWorktree(path string, force bool) error {
 		args = append(args, "--force")
 	}
 	args = append(args, path)
-	return exec.Command("git", args...).Run()
-}
-
-// HasUncommittedChanges returns true if the working directory has uncommitted changes.
-func HasUncommittedChanges(path string) bool {
-	out, _ := exec.Command("git", "-C", path, "status", "--porcelain").Output()
-	return len(strings.TrimSpace(string(out))) > 0
-}
-
-// HeadRef returns the short HEAD commit hash for the given repo, or "" on error.
-func HeadRef(repoPath string) string {
-	out, err := exec.Command("git", "-C", repoPath, "rev-parse", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// DiffShortstat returns a compact summary of uncommitted changes against HEAD,
-// e.g. "3 files · +127/-44". Empty string when the working tree is clean.
-func DiffShortstat(repoPath string) string {
-	out, err := exec.Command("git", "-C", repoPath, "diff", "--shortstat", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	line := strings.TrimSpace(string(out))
-	if line == "" {
-		return ""
-	}
-	// Example: "3 files changed, 127 insertions(+), 44 deletions(-)"
-	var files, ins, del string
-	for _, part := range strings.Split(line, ",") {
-		p := strings.TrimSpace(part)
-		switch {
-		case strings.HasSuffix(p, "changed"):
-			files = strings.TrimSuffix(strings.TrimSpace(strings.TrimSuffix(p, "changed")), "files")
-			files = strings.TrimSpace(strings.TrimSuffix(files, "file"))
-		case strings.Contains(p, "insertion"):
-			ins = strings.Fields(p)[0]
-		case strings.Contains(p, "deletion"):
-			del = strings.Fields(p)[0]
+	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%s", msg)
 		}
+		return err
 	}
-	if files == "" {
-		return ""
-	}
-	label := files + " files"
-	if files == "1" {
-		label = "1 file"
-	}
-	if ins == "" {
-		ins = "0"
-	}
-	if del == "" {
-		del = "0"
-	}
-	return fmt.Sprintf("%s · +%s/-%s", label, ins, del)
+	return nil
 }
 
-// AheadBehind returns a "+ahead/-behind" string relative to the default branch,
-// or an empty string if even or on error.
-func AheadBehind(repoPath string) string {
-	mainBranch := DefaultBranch(repoPath)
-
-	out, err := exec.Command("git", "-C", repoPath, "rev-list", "--left-right", "--count", mainBranch+"...HEAD").Output()
+// DirtyCount returns the number of files with uncommitted changes (staged,
+// unstaged, or untracked) in the worktree at path.
+func DirtyCount(path string) int {
+	out, err := exec.Command("git", "-C", path, "status", "--porcelain").Output()
 	if err != nil {
-		return ""
+		return 0
 	}
+	trimmed := strings.TrimRight(string(out), "\n")
+	if trimmed == "" {
+		return 0
+	}
+	return strings.Count(trimmed, "\n") + 1
+}
 
-	parts := strings.Fields(strings.TrimSpace(string(out)))
-	if len(parts) != 2 {
-		return ""
+// LastCommit returns the timestamp of HEAD in the worktree at path.
+// The zero time is returned when there is no commit or git fails.
+func LastCommit(path string) time.Time {
+	out, err := exec.Command("git", "-C", path, "log", "-1", "--format=%ct").Output()
+	if err != nil {
+		return time.Time{}
 	}
+	secs, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(secs, 0)
+}
 
-	behind, ahead := parts[0], parts[1]
-	if ahead == "0" && behind == "0" {
-		return ""
+// AheadBehind counts commits the worktree's HEAD is ahead of and behind the
+// repository's default branch. Both are 0 when the branch is the default one,
+// has no merge base, or git fails.
+func AheadBehind(path, base string) (ahead, behind int) {
+	out, err := exec.Command("git", "-C", path, "rev-list", "--left-right", "--count", base+"...HEAD").Output()
+	if err != nil {
+		return 0, 0
 	}
-	return fmt.Sprintf("+%s/-%s", ahead, behind)
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) != 2 {
+		return 0, 0
+	}
+	behind, _ = strconv.Atoi(fields[0])
+	ahead, _ = strconv.Atoi(fields[1])
+	return ahead, behind
 }

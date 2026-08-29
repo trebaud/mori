@@ -1,18 +1,20 @@
 // Package tui renders mori's interactive terminal UI.
 //
-// It follows the Elm architecture. Each concern lives in its own file:
+// It follows the Elm architecture, one concern per file:
 //
-//   - model.go      state, messages, Init, helpers
-//   - update.go     Update + per-mode key handlers
-//   - commands.go   tea.Cmd side effects + archive persistence
-//   - view.go       View + rendering
-//   - theme.go      colors, styles, status styling
-//   - utils.go      formatters and layout helpers
+//   - model.go     state, messages, Init, layout helpers
+//   - update.go    Update + per-mode key handlers
+//   - commands.go  tea.Cmd side effects + archive persistence
+//   - view.go      View + rendering
+//   - theme.go     colors and styles
+//   - utils.go     formatters, framing, overlay compositing
 package tui
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -20,37 +22,45 @@ import (
 	"github.com/trebaud/mori/internal/git"
 )
 
-// Run launches the TUI. When the user picks a worktree, it hands control to
-// the `claude` CLI in that worktree, then loops back into the TUI when claude exits.
-func Run(worktrees []internal.Worktree) {
-	DetectAndApplyTheme()
-	for {
-		// Wipe the screen (and scrollback) so leftover output from a previous
-		// claude/tmux session doesn't pile up behind the TUI across re-entries.
-		fmt.Fprint(os.Stdout, "\033[H\033[2J\033[3J")
-
-		currentBranch := git.CurrentBranch()
-
-		if refreshed, err := internal.List(); err == nil {
-			worktrees = refreshed
-		}
-
-		p := tea.NewProgram(newModel(worktrees, currentBranch))
-
-		m, err := p.Run()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
-			os.Exit(1)
-		}
-
-		final, ok := m.(model)
-		if !ok || final.selected < 0 {
-			return
-		}
-
-		if err := internal.LaunchClaude(final.worktrees[final.selected]); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+// Run launches the TUI and returns the path of the worktree the user picked,
+// or "" if they quit without picking one.
+//
+// The UI is read from and drawn to the controlling terminal rather than to
+// stdin/stdout, so callers can print the chosen path on stdout and users can
+// write `cd "$(mori)"`.
+func Run(worktrees []internal.Worktree) (string, error) {
+	// /dev/tty is the controlling terminal regardless of how stdin and stdout
+	// are redirected; failing to open it means there is nobody to drive the UI.
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return "", fmt.Errorf("mori needs an interactive terminal — use `mori list` or `mori path <branch>`")
 	}
+	defer tty.Close()
+
+	DetectAndApplyTheme(tty)
+
+	repoRoot, err := git.FindMainRepo(".")
+	if err != nil {
+		return "", err
+	}
+
+	m := newModel(worktrees, repoLabel(repoRoot), git.CurrentBranch())
+	final, err := tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty)).Run()
+	if err != nil {
+		return "", fmt.Errorf("running TUI: %w", err)
+	}
+
+	result, ok := final.(model)
+	if !ok || result.selected < 0 {
+		return "", nil
+	}
+	return result.worktrees[result.selected].Path, nil
+}
+
+// repoLabel renders the repository root for the top bar, with $HOME collapsed.
+func repoLabel(root string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(root, home) {
+		return "~" + root[len(home):]
+	}
+	return filepath.Clean(root)
 }

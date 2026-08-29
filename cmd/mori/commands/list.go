@@ -4,123 +4,59 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
-	"sync"
 	"text/tabwriter"
+	"time"
 
 	"github.com/trebaud/mori/internal"
-	"github.com/trebaud/mori/internal/github"
 )
 
-const prFetchConcurrency = 4
-
-func PrintList(jsonOutput bool, statusFilter string) error {
+// PrintList writes every worktree of the current repository to stdout, as a
+// table by default or as JSON for scripting.
+func PrintList(jsonOutput bool) error {
 	worktrees, err := internal.List()
 	if err != nil {
 		return err
 	}
 
-	if statusFilter != "" {
-		worktrees, err = internal.FilterByStatus(worktrees, statusFilter)
-		if err != nil {
-			return err
-		}
-	}
-
 	if jsonOutput {
-		fetchPRs(worktrees)
 		return printJSON(worktrees)
 	}
-
 	return printTable(worktrees)
 }
 
-type prJSON struct {
-	Number  int    `json:"number"`
-	State   string `json:"state"`
-	IsDraft bool   `json:"is_draft,omitempty"`
-	Title   string `json:"title,omitempty"`
-	URL     string `json:"url,omitempty"`
-}
-
 type worktreeJSON struct {
-	Path         string  `json:"path"`
-	Branch       string  `json:"branch"`
-	Session      string  `json:"session"`
-	Model        string  `json:"model,omitempty"`
-	Mode         string  `json:"mode,omitempty"`
-	Cost         float64 `json:"cost,omitempty"`
-	Task         string  `json:"task,omitempty"`
-	LastActivity string  `json:"last_activity,omitempty"`
-	AheadBehind  string  `json:"ahead_behind,omitempty"`
-	PR           *prJSON `json:"pr,omitempty"`
-}
-
-// fetchPRs populates wt.PR for non-main worktrees in parallel, bounded by
-// prFetchConcurrency. Failures and missing gh degrade silently to wt.PR == nil.
-func fetchPRs(worktrees []internal.Worktree) {
-	if !github.IsAvailable() {
-		return
-	}
-	sem := make(chan struct{}, prFetchConcurrency)
-	var wg sync.WaitGroup
-	for i := range worktrees {
-		if worktrees[i].IsMain || worktrees[i].Branch == "" {
-			continue
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(idx int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			info, _ := github.Refresh(worktrees[idx].Branch)
-			worktrees[idx].PR = info
-		}(i)
-	}
-	wg.Wait()
-}
-
-func sessionLabel(wt internal.Worktree) string {
-	return string(wt.Insights.Status)
+	Path        string `json:"path"`
+	Branch      string `json:"branch,omitempty"`
+	DisplayPath string `json:"display_path"`
+	Head        string `json:"head,omitempty"`
+	Main        bool   `json:"main,omitempty"`
+	Detached    bool   `json:"detached,omitempty"`
+	Dirty       int    `json:"dirty"`
+	Ahead       int    `json:"ahead"`
+	Behind      int    `json:"behind"`
+	LastCommit  string `json:"last_commit,omitempty"`
 }
 
 func printJSON(worktrees []internal.Worktree) error {
-	var items []worktreeJSON
+	items := make([]worktreeJSON, 0, len(worktrees))
 	for _, wt := range worktrees {
 		item := worktreeJSON{
-			Path:    wt.Path,
-			Branch:  wt.Branch,
-			Session: sessionLabel(wt),
+			Path:        wt.Path,
+			Branch:      wt.Branch,
+			DisplayPath: wt.DisplayPath,
+			Head:        wt.Head,
+			Main:        wt.IsMain,
+			Detached:    wt.Detached,
+			Dirty:       wt.Dirty,
+			Ahead:       wt.Ahead,
+			Behind:      wt.Behind,
 		}
-		if wt.Insights.Model != "" {
-			item.Model = wt.Insights.Model
-		}
-		if wt.Insights.Mode != "" {
-			item.Mode = wt.Insights.Mode
-		}
-		if wt.Insights.CostUSD > 0 {
-			item.Cost = wt.Insights.CostUSD
-		}
-		if wt.Insights.CurrentTask != "" {
-			item.Task = wt.Insights.CurrentTask
-		}
-		if !wt.Insights.LastActivity.IsZero() {
-			item.LastActivity = wt.Insights.LastActivity.Format("2006-01-02T15:04:05Z07:00")
-		}
-		if wt.Insights.AheadBehind != "" {
-			item.AheadBehind = wt.Insights.AheadBehind
-		}
-		if wt.PR != nil && wt.PR.Number > 0 {
-			item.PR = &prJSON{
-				Number:  wt.PR.Number,
-				State:   strings.ToLower(string(wt.PR.State)),
-				IsDraft: wt.PR.IsDraft,
-				Title:   wt.PR.Title,
-				URL:     wt.PR.URL,
-			}
+		if !wt.LastCommit.IsZero() {
+			item.LastCommit = wt.LastCommit.Format(time.RFC3339)
 		}
 		items = append(items, item)
 	}
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(items)
@@ -128,13 +64,26 @@ func printJSON(worktrees []internal.Worktree) error {
 
 func printTable(worktrees []internal.Worktree) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "PATH\tBRANCH\tSESSION\tCOST")
+	fmt.Fprintln(w, "PATH\tBRANCH\tCHANGES\tSYNC")
 	for _, wt := range worktrees {
-		cost := ""
-		if wt.Insights.CostUSD > 0 {
-			cost = fmt.Sprintf("$%.2f", wt.Insights.CostUSD)
+		changes := "clean"
+		if wt.Dirty > 0 {
+			changes = fmt.Sprintf("%d dirty", wt.Dirty)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", wt.RelativePath, wt.Branch, sessionLabel(wt), cost)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", wt.DisplayPath, wt.Label(), changes, syncLabel(wt))
 	}
 	return w.Flush()
+}
+
+func syncLabel(wt internal.Worktree) string {
+	switch {
+	case wt.Ahead > 0 && wt.Behind > 0:
+		return fmt.Sprintf("+%d/-%d", wt.Ahead, wt.Behind)
+	case wt.Ahead > 0:
+		return fmt.Sprintf("+%d", wt.Ahead)
+	case wt.Behind > 0:
+		return fmt.Sprintf("-%d", wt.Behind)
+	default:
+		return "-"
+	}
 }

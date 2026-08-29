@@ -3,20 +3,19 @@ package commands
 import (
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/trebaud/mori/internal"
 )
 
+// CreateOptions configures a worktree creation.
 type CreateOptions struct {
-	Repo         string
-	Branch       string
-	LaunchClaude bool
+	Repo   string // repository root; defaults to the working directory
+	Branch string // branch to create; a random name when empty
 }
 
+// Create makes a new worktree, streaming each setup step to stderr and
+// printing the resulting directory on stdout.
 func Create(opts CreateOptions) error {
 	repo := opts.Repo
 	if repo == "" {
@@ -55,27 +54,7 @@ func Create(opts CreateOptions) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "\n  \033[0;90m%s\033[0m\n\n", result.Dir)
-
-	if opts.LaunchClaude {
-		claudePath, err := exec.LookPath("claude")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "    \033[1;31m✖\033[0m claude not found in PATH\n")
-			return nil
-		}
-
-		args := []string{"--tmux=classic"}
-		if branch != result.BaseBranch {
-			args = append(args, "--worktree", filepath.Base(result.Dir))
-		}
-
-		fmt.Fprintf(os.Stderr, "  \033[0;90m%s\033[0m\n\n", "claude "+strings.Join(args, " "))
-		cmd := exec.Command(claudePath, args...)
-		cmd.Dir = result.Dir
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Run()
-	}
+	fmt.Fprintln(os.Stdout, result.Dir)
 
 	return nil
 }

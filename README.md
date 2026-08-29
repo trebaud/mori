@@ -6,22 +6,27 @@
 
 > *mori* (森) — Japanese for "forest." A place where many trees grow together.
 
-A TUI for managing git worktrees with Claude Code agent insights.
+A small TUI for managing git worktrees.
 
 ![Mori demo](assets/demo.gif)
 
 ## Why
 
-Running multiple Claude Code agents in parallel means juggling tmux panes, branches, and `git worktree` commands. Mori puts them in one view so you can see what each agent is doing and what it's costing.
+`git worktree` is great and its CLI is not. Mori lists every worktree in a repo
+with the state you actually care about — dirty files, ahead/behind, last commit —
+and lets you create, delete, and jump into them without leaving the list.
+
+That's the whole scope. No agent tracking, no PR status, no session management.
 
 ## Features
 
-- Browse, create, and delete git worktrees without leaving the TUI
-- Per-worktree agent insights: status, cost, context usage, current task, git log, ahead/behind
-- PR tracking via [`gh`](https://cli.github.com/)
-- Search, sort, and filter worktrees
-- Adaptive refresh: 2s when agents are active, 10s when idle
-- Includes a [Claude Code skill](skill/SKILL.md) so Claude can run mori commands
+- Browse every worktree in the repo, with dirty count, ahead/behind, and last commit
+- Create and delete worktrees from the TUI or the CLI
+- Pick a worktree and `cd` into it (mori prints the path on exit)
+- Worktrees live outside the repo, so `git status` stays clean
+- Post-create hooks so a new worktree comes up ready to work in
+- Filter, sort, and archive worktrees you're not looking at
+- JSON output for scripting
 
 ## Install
 
@@ -39,24 +44,82 @@ cd mori
 ./scripts/install.sh
 ```
 
-The script checks dependencies, builds the binary, and installs it to `/usr/local/bin` or `~/.local/bin`.
+The script checks dependencies, builds the binary, and installs it to
+`/usr/local/bin` or `~/.local/bin`.
 
 ## Usage
 
 ```bash
-mori                           # Launch the TUI
-mori new feat --claude         # Create a worktree and launch Claude Code in it
-mori open feat                 # Attach to the Claude session for a worktree
-mori list --json               # List worktrees with full insights
-mori status                    # One-line summary of all worktrees
-mori remove feat               # Remove a worktree
+mori                  # TUI; prints the picked worktree path on exit
+mori new feat         # Create a worktree on a new branch "feat"
+mori list             # Table of worktrees
+mori list --json      # Same, machine-readable
+mori path feat        # Print the directory for branch "feat"
+mori remove feat      # Remove a worktree (asks before discarding changes)
 ```
 
 Press `?` inside the TUI for keybindings.
 
+### Shell integration
+
+Picking a worktree prints its path on stdout, so a one-line shell function turns
+mori into a worktree switcher:
+
+```bash
+mc() { cd "$(mori)" || return; }
+```
+
+The TUI itself draws to the terminal, not to stdout, so `$(mori)` only ever
+captures the path.
+
+## Keybindings
+
+| Key | Action |
+|---|---|
+| `j`/`k`, `↑`/`↓` | Move between worktrees |
+| `g` / `G` | Jump to first / last |
+| `ctrl+d` / `ctrl+u` | Page down / up |
+| `enter`, `o` | Pick a worktree — prints its path on exit |
+| `n` | Create a worktree |
+| `d` | Delete the selected worktree |
+| `y` | Yank the path to the clipboard |
+| `r` | Refresh git state now |
+| `/` | Filter by branch or path |
+| `s` | Cycle sort (default, recent, name) |
+| `x` / `X` | Archive / show archived |
+| `?` | Help |
+| `q`, `ctrl+c` | Quit |
+
+## Where worktrees live
+
+Worktrees are created under `~/.mori/worktrees/<repo>/<branch>`, not inside the
+repository:
+
+```
+~/.mori/
+├── settings.json
+├── archived.json
+└── worktrees/
+    ├── mori/
+    │   ├── feat-parser/
+    │   └── fix-theme/
+    └── other-project/
+        └── feat-parser/
+```
+
+Keeping them out of the working tree means git never sees them: no `.gitignore`
+entry to remember, and no `git add -A` accidentally committing a worktree as an
+embedded repository. If two repositories share a directory name, the second one
+gets a short hash appended (`api-3f9a2b`) so they don't collide.
+
+Worktrees created by earlier versions under `<repo>/.claude/worktrees` keep
+working — mori lists whatever `git worktree list` reports. Only new ones go to
+the new location.
+
 ## Configuration
 
-Global: `~/.mori/settings.json`. Per-project: `.mori.json` in the repo root (overrides global).
+Global: `~/.mori/settings.json`. Per-project: `.mori.json` in the repo root
+(replaces global).
 
 Run commands automatically after creating a worktree:
 
@@ -64,12 +127,14 @@ Run commands automatically after creating a worktree:
 {
   "post_create": [
     { "name": "Installing dependencies", "cmd": "npm install" },
-    { "name": "Copying env", "cmd": "cp ../.env .env" }
+    { "name": "Copying env", "cmd": "cp ~/Code/myproject/.env .env" }
   ]
 }
 ```
 
-Each step runs in the new worktree directory. A failing step prints a warning but doesn't block the rest.
+Each step runs in the new worktree directory. A failing step prints a warning
+but doesn't block the rest. Note that the worktree is not next to the repo, so
+use absolute paths when copying files in.
 
 ## Claude Code Skill
 
@@ -79,23 +144,10 @@ Install the [skill](skill/SKILL.md) so Claude can run mori commands directly:
 cp -r skill ~/.claude/skills/mori
 ```
 
-This is useful when you want competing implementations side by side: start each one in its own worktree, watch them in the TUI, and remove the ones you don't keep.
-
-## Diagnostics
-
-Agent insights are parsed from Claude Code session logs at `~/.claude/projects/<encoded-worktree-path>/*.jsonl`. If a worktree shows no agent state, check that:
-
-- A `claude` session has been started in that worktree at least once
-- The worktree path resolves (no broken symlinks)
-- `gh auth status` is healthy if PR state is missing
-
 ## Requirements
 
 - Go 1.21+
 - Git
-- [tmux](https://github.com/tmux/tmux) — manages Claude Code sessions
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — for agent sessions and insights
-- [gh](https://cli.github.com/) — optional, for PR status
 
 ## License
 

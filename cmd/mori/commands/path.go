@@ -2,11 +2,14 @@ package commands
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/trebaud/mori/internal"
 )
 
-func Open(branch string) error {
+// Path prints the worktree directory for a branch, the non-interactive
+// counterpart to picking one in the TUI.
+func Path(branch string) error {
 	worktrees, err := internal.List()
 	if err != nil {
 		return err
@@ -17,5 +20,6 @@ func Open(branch string) error {
 		return fmt.Errorf("no worktree found for branch '%s'", branch)
 	}
 
-	return internal.LaunchClaude(*target)
+	fmt.Fprintln(os.Stdout, target.Path)
+	return nil
 }

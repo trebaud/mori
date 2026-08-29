@@ -12,5 +12,5 @@ Thumbs.db
 *.log
 bin
 dist
-mori
+/mori
 .claude/worktrees

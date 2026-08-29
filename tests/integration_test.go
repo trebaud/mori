@@ -44,18 +44,17 @@ type moriResult struct {
 }
 
 func runMori(t *testing.T, dir string, args ...string) moriResult {
-	return runMoriEnv(t, dir, nil, args...)
+	return runMoriStdin(t, dir, "", args...)
 }
 
-// runMoriEnv runs mori with extra env vars appended after the parent env.
-// By default MORI_GH_PATH is set to an unreachable path so tests don't hit a
-// real gh on the host; tests that need a stub can override via extraEnv.
-func runMoriEnv(t *testing.T, dir string, extraEnv []string, args ...string) moriResult {
+// runMoriStdin runs mori with the given stdin content, for commands that prompt.
+// HOME is redirected next to the repo so tests never touch the real ~/.mori.
+func runMoriStdin(t *testing.T, dir, stdin string, args ...string) moriResult {
 	t.Helper()
 	cmd := exec.Command(moriBinary, args...)
 	cmd.Dir = dir
-	env := append(os.Environ(), "MORI_GH_PATH=/nonexistent/gh")
-	cmd.Env = append(env, extraEnv...)
+	cmd.Env = append(os.Environ(), "HOME="+testHome(dir))
+	cmd.Stdin = strings.NewReader(stdin)
 
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -69,11 +68,7 @@ func runMoriEnv(t *testing.T, dir string, extraEnv []string, args ...string) mor
 		t.Fatalf("failed to run mori %v: %v", args, err)
 	}
 
-	return moriResult{
-		stdout:   outBuf.String(),
-		stderr:   errBuf.String(),
-		exitCode: exitCode,
-	}
+	return moriResult{stdout: outBuf.String(), stderr: errBuf.String(), exitCode: exitCode}
 }
 
 func gitInRepo(t *testing.T, dir string, args ...string) string {
@@ -93,20 +88,39 @@ func gitInRepo(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-// initTestRepo creates a temp git repo with one commit on "main".
+// testHome is the fake home directory for a repo under test: a sibling of the
+// repo, so mori's state lands in the test's temp tree.
+func testHome(repoDir string) string {
+	return filepath.Join(filepath.Dir(repoDir), "home")
+}
+
+// worktreePath is where mori puts a branch's worktree for a repo under test.
+func worktreePath(repoDir, branch string) string {
+	return filepath.Join(testHome(repoDir), ".mori", "worktrees", filepath.Base(repoDir), branch)
+}
+
+// initTestRepo creates a temp git repo with one commit on "main", alongside a
+// fake home directory for mori's state.
 func initTestRepo(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	root := t.TempDir()
+	dir := filepath.Join(root, "repo")
+	if err := os.MkdirAll(filepath.Join(root, "home"), 0o755); err != nil {
+		t.Fatalf("failed to create fake home: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("failed to create repo dir: %v", err)
+	}
 
 	gitInRepo(t, dir, "init", "-b", "main")
-	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0o644)
 	gitInRepo(t, dir, "add", "README.md")
 	gitInRepo(t, dir, "commit", "-m", "initial commit")
 
 	return dir
 }
 
-// initTestRepoWithWorktree creates a repo and a worktree via the mori binary.
+// initTestRepoWithWorktree creates a repo plus one worktree via the mori binary.
 func initTestRepoWithWorktree(t *testing.T, branch string) string {
 	t.Helper()
 	dir := initTestRepo(t)
@@ -115,6 +129,41 @@ func initTestRepoWithWorktree(t *testing.T, branch string) string {
 		t.Fatalf("setup: failed to create worktree %q: %s", branch, res.stderr)
 	}
 	return dir
+}
+
+type worktreeJSON struct {
+	Path        string `json:"path"`
+	Branch      string `json:"branch"`
+	DisplayPath string `json:"display_path"`
+	Head        string `json:"head"`
+	Main        bool   `json:"main"`
+	Detached    bool   `json:"detached"`
+	Dirty       int    `json:"dirty"`
+	Ahead       int    `json:"ahead"`
+	Behind      int    `json:"behind"`
+	LastCommit  string `json:"last_commit"`
+}
+
+func listJSON(t *testing.T, dir string) []worktreeJSON {
+	t.Helper()
+	res := runMori(t, dir, "list", "--json")
+	if res.exitCode != 0 {
+		t.Fatalf("mori list --json: exit %d, stderr: %s", res.exitCode, res.stderr)
+	}
+	var items []worktreeJSON
+	if err := json.Unmarshal([]byte(res.stdout), &items); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, res.stdout)
+	}
+	return items
+}
+
+func findByBranch(items []worktreeJSON, branch string) *worktreeJSON {
+	for i := range items {
+		if items[i].Branch == branch {
+			return &items[i]
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -145,10 +194,23 @@ func TestHelp(t *testing.T) {
 		if res.exitCode != 0 {
 			t.Errorf("mori %s: exit %d", arg, res.exitCode)
 		}
-		for _, keyword := range []string{"mori new", "mori list", "mori remove", "mori open", "mori status"} {
+		for _, keyword := range []string{"mori new", "mori list", "mori remove", "mori path"} {
 			if !strings.Contains(res.stdout, keyword) {
 				t.Errorf("mori %s: help text missing %q", arg, keyword)
 			}
+		}
+	}
+}
+
+// The agent-tracking surface was dropped; make sure it stays gone.
+func TestHelpHasNoAgentCommands(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	res := runMori(t, dir, "help")
+	for _, gone := range []string{"claude", "Claude", "insights", "status", "PR"} {
+		if strings.Contains(res.stdout, gone) {
+			t.Errorf("help text still mentions %q:\n%s", gone, res.stdout)
 		}
 	}
 }
@@ -179,16 +241,17 @@ func TestNewWithBranch(t *testing.T) {
 		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
 	}
 
-	if !strings.Contains(res.stderr, "feature-x") {
-		t.Errorf("stderr missing branch name, got: %q", res.stderr)
+	wtPath := worktreePath(dir, "feature-x")
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Errorf("worktree directory not created at %s: %v", wtPath, err)
 	}
-	if !strings.Contains(res.stderr, "Creating branch from main") {
-		t.Errorf("stderr missing base branch info, got: %q", res.stderr)
+	if got := strings.TrimSpace(res.stdout); got != wtPath {
+		t.Errorf("stdout = %q, want the worktree path %q", got, wtPath)
 	}
 
-	wtDir := filepath.Join(dir, ".claude", "worktrees", "feature-x")
-	if _, err := os.Stat(wtDir); os.IsNotExist(err) {
-		t.Errorf("worktree directory does not exist: %s", wtDir)
+	branches := gitInRepo(t, dir, "branch", "--list", "feature-x")
+	if !strings.Contains(branches, "feature-x") {
+		t.Errorf("branch feature-x not created, got: %q", branches)
 	}
 }
 
@@ -201,26 +264,9 @@ func TestNewAutoBranch(t *testing.T) {
 		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
 	}
 
-	pattern := regexp.MustCompile(`wt-[a-z0-9]{5}`)
-	if !pattern.MatchString(res.stderr) {
-		t.Errorf("expected auto-generated branch name matching wt-xxxxx in stderr, got: %q", res.stderr)
-	}
-
-	// Verify the worktree dir was created
-	wtBase := filepath.Join(dir, ".claude", "worktrees")
-	entries, err := os.ReadDir(wtBase)
-	if err != nil {
-		t.Fatalf("cannot read worktrees dir: %v", err)
-	}
-	found := false
-	for _, e := range entries {
-		if pattern.MatchString(e.Name()) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("no worktree directory matching wt-xxxxx found")
+	branches := gitInRepo(t, dir, "branch", "--list", "wt-*")
+	if !regexp.MustCompile(`wt-[a-z0-9]{5}`).MatchString(branches) {
+		t.Errorf("expected an auto-generated wt-XXXXX branch, got: %q", branches)
 	}
 }
 
@@ -228,52 +274,69 @@ func TestNewFromInsideRepo(t *testing.T) {
 	t.Parallel()
 	dir := initTestRepo(t)
 
-	// Run without -r flag, cwd is the repo
-	res := runMori(t, dir, "new", "inside-test")
+	res := runMori(t, dir, "new", "inside-branch")
 	if res.exitCode != 0 {
 		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
 	}
+	if _, err := os.Stat(worktreePath(dir, "inside-branch")); err != nil {
+		t.Errorf("worktree not created: %v", err)
+	}
+}
 
-	wtDir := filepath.Join(dir, ".claude", "worktrees", "inside-test")
-	if _, err := os.Stat(wtDir); os.IsNotExist(err) {
-		t.Errorf("worktree directory does not exist: %s", wtDir)
+// Worktrees live outside the repository. Nested inside it, git reported them
+// as an untracked embedded repo and `git add -A` committed a gitlink.
+func TestNewLeavesRepoClean(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepo(t)
+
+	if res := runMori(t, dir, "new", "offsite", "-r", dir); res.exitCode != 0 {
+		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
+	}
+
+	if status := gitInRepo(t, dir, "status", "--porcelain"); strings.TrimSpace(status) != "" {
+		t.Errorf("creating a worktree dirtied the repo:\n%s", status)
+	}
+	if entries, err := os.ReadDir(filepath.Join(dir, ".claude")); err == nil {
+		t.Errorf("worktree created inside the repo: .claude holds %d entries", len(entries))
 	}
 }
 
 func TestNewNotAGitRepo(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir() // plain dir, no git init
+	dir := t.TempDir()
 
-	res := runMori(t, dir, "new", "some-branch", "-r", dir)
+	res := runMori(t, dir, "new", "some-branch")
 	if res.exitCode == 0 {
-		t.Error("expected non-zero exit for non-repo dir")
+		t.Error("expected non-zero exit outside a git repository")
 	}
 	if !strings.Contains(res.stderr, "not a git repository") {
-		t.Errorf("expected 'not a git repository' in stderr, got: %q", res.stderr)
+		t.Errorf("expected 'not a git repository', got: %q", res.stderr)
 	}
 }
 
 func TestNewNoCommits(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	root := t.TempDir()
+	dir := filepath.Join(root, "repo")
+	os.MkdirAll(dir, 0o755)
 	gitInRepo(t, dir, "init", "-b", "main")
 
 	res := runMori(t, dir, "new", "branch", "-r", dir)
 	if res.exitCode == 0 {
-		t.Error("expected non-zero exit for repo with no commits")
+		t.Error("expected non-zero exit in a repo with no commits")
 	}
 	if !strings.Contains(res.stderr, "no commits") {
-		t.Errorf("expected 'no commits' in stderr, got: %q", res.stderr)
+		t.Errorf("expected a 'no commits' message, got: %q", res.stderr)
 	}
 }
 
 func TestNewDuplicateBranch(t *testing.T) {
 	t.Parallel()
-	dir := initTestRepoWithWorktree(t, "dupe")
+	dir := initTestRepoWithWorktree(t, "dup")
 
-	res := runMori(t, dir, "new", "dupe", "-r", dir)
+	res := runMori(t, dir, "new", "dup", "-r", dir)
 	if res.exitCode == 0 {
-		t.Error("expected non-zero exit for duplicate branch")
+		t.Error("expected non-zero exit when the branch already exists")
 	}
 }
 
@@ -289,100 +352,85 @@ func TestListBasic(t *testing.T) {
 	if res.exitCode != 0 {
 		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
 	}
-
-	for _, header := range []string{"PATH", "BRANCH", "SESSION", "COST"} {
+	for _, header := range []string{"PATH", "BRANCH", "CHANGES", "SYNC"} {
 		if !strings.Contains(res.stdout, header) {
-			t.Errorf("table output missing header %q", header)
+			t.Errorf("table missing %q column:\n%s", header, res.stdout)
 		}
 	}
 	if !strings.Contains(res.stdout, "main") {
-		t.Error("table output missing 'main' branch")
+		t.Errorf("expected the main worktree in the table:\n%s", res.stdout)
 	}
 }
 
 func TestListWithWorktrees(t *testing.T) {
 	t.Parallel()
-	dir := initTestRepo(t)
-	runMori(t, dir, "new", "alpha", "-r", dir)
-	runMori(t, dir, "new", "beta", "-r", dir)
+	dir := initTestRepoWithWorktree(t, "listed")
 
-	res := runMori(t, dir, "list")
+	res := runMori(t, dir, "ls")
 	if res.exitCode != 0 {
 		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
 	}
-
-	for _, branch := range []string{"main", "alpha", "beta"} {
-		if !strings.Contains(res.stdout, branch) {
-			t.Errorf("list output missing branch %q", branch)
-		}
+	if !strings.Contains(res.stdout, "listed") {
+		t.Errorf("expected branch 'listed' in output:\n%s", res.stdout)
 	}
 }
 
 func TestListJSON(t *testing.T) {
 	t.Parallel()
-	dir := initTestRepoWithWorktree(t, "json-test")
+	dir := initTestRepoWithWorktree(t, "json-branch")
 
-	res := runMori(t, dir, "list", "--json")
-	if res.exitCode != 0 {
-		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
+	items := listJSON(t, dir)
+	if len(items) != 2 {
+		t.Fatalf("got %d worktrees, want 2", len(items))
 	}
 
-	var items []map[string]any
-	if err := json.Unmarshal([]byte(res.stdout), &items); err != nil {
-		t.Fatalf("invalid JSON output: %v\nraw: %s", err, res.stdout)
+	main := findByBranch(items, "main")
+	if main == nil || !main.Main {
+		t.Fatalf("expected a main worktree flagged as main, got %+v", items)
 	}
-
-	if len(items) < 2 {
-		t.Fatalf("expected at least 2 entries (main + json-test), got %d", len(items))
+	wt := findByBranch(items, "json-branch")
+	if wt == nil {
+		t.Fatalf("worktree 'json-branch' missing from JSON: %+v", items)
 	}
-
-	// Verify required keys exist
-	for _, item := range items {
-		for _, key := range []string{"path", "branch", "session"} {
-			if _, ok := item[key]; !ok {
-				t.Errorf("JSON entry missing key %q: %v", key, item)
-			}
-		}
+	if wt.Main {
+		t.Error("json-branch should not be flagged as the main worktree")
 	}
-
-	// Verify our branch is present
-	found := false
-	for _, item := range items {
-		if item["branch"] == "json-test" {
-			found = true
-			break
-		}
+	if wt.DisplayPath != filepath.Join("~/.mori", "worktrees", "repo", "json-branch") {
+		t.Errorf("display_path = %q", wt.DisplayPath)
 	}
-	if !found {
-		t.Error("JSON output missing 'json-test' branch")
+	if len(wt.Head) != 7 {
+		t.Errorf("head = %q, want a 7-character short sha", wt.Head)
+	}
+	if wt.LastCommit == "" {
+		t.Error("last_commit should be set")
 	}
 }
 
-func TestListInvalidStatus(t *testing.T) {
+// A fresh worktree is clean and level with main; editing a file makes it dirty
+// and committing puts it ahead.
+func TestListJSONTracksGitState(t *testing.T) {
 	t.Parallel()
-	dir := initTestRepo(t)
+	dir := initTestRepoWithWorktree(t, "stateful")
+	wtDir := worktreePath(dir, "stateful")
 
-	res := runMori(t, dir, "list", "--status", "invalid")
-	if res.exitCode == 0 {
-		t.Error("expected non-zero exit for invalid status filter")
-	}
-	if !strings.Contains(res.stderr, "invalid status") {
-		t.Errorf("expected 'invalid status' in stderr, got: %q", res.stderr)
-	}
-}
-
-func TestListStatusFilterNone(t *testing.T) {
-	t.Parallel()
-	dir := initTestRepoWithWorktree(t, "filtered")
-
-	res := runMori(t, dir, "list", "--status", "none")
-	if res.exitCode != 0 {
-		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
+	wt := findByBranch(listJSON(t, dir), "stateful")
+	if wt.Dirty != 0 || wt.Ahead != 0 || wt.Behind != 0 {
+		t.Fatalf("fresh worktree should be clean and level, got %+v", wt)
 	}
 
-	// All test worktrees have no Claude sessions, so all should be StatusNone
-	if !strings.Contains(res.stdout, "PATH") {
-		t.Error("expected table output with headers")
+	os.WriteFile(filepath.Join(wtDir, "new.txt"), []byte("hello\n"), 0o644)
+	if wt = findByBranch(listJSON(t, dir), "stateful"); wt.Dirty != 1 {
+		t.Errorf("dirty = %d, want 1 after adding an untracked file", wt.Dirty)
+	}
+
+	gitInRepo(t, wtDir, "add", "new.txt")
+	gitInRepo(t, wtDir, "commit", "-m", "add file")
+	wt = findByBranch(listJSON(t, dir), "stateful")
+	if wt.Dirty != 0 {
+		t.Errorf("dirty = %d, want 0 after committing", wt.Dirty)
+	}
+	if wt.Ahead != 1 || wt.Behind != 0 {
+		t.Errorf("ahead/behind = %d/%d, want 1/0 after one commit", wt.Ahead, wt.Behind)
 	}
 }
 
@@ -392,63 +440,67 @@ func TestListNotInRepo(t *testing.T) {
 
 	res := runMori(t, dir, "list")
 	if res.exitCode == 0 {
-		t.Error("expected non-zero exit outside a git repo")
+		t.Error("expected non-zero exit outside a git repository")
 	}
 	if !strings.Contains(res.stderr, "not a git repository") {
-		t.Errorf("expected 'not a git repository' in stderr, got: %q", res.stderr)
+		t.Errorf("expected 'not a git repository', got: %q", res.stderr)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Group 4: mori open
+// Group 4: mori path
 // ---------------------------------------------------------------------------
 
-func TestOpenExistingBranch(t *testing.T) {
+func TestPathExistingBranch(t *testing.T) {
 	t.Parallel()
-	dir := initTestRepoWithWorktree(t, "open-me")
+	dir := initTestRepoWithWorktree(t, "pathed")
 
-	stub, err := filepath.Abs("fixtures/claude-stub.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	res := runMoriEnv(t, dir, []string{"MORI_CLAUDE_PATH=" + stub}, "open", "open-me")
+	res := runMori(t, dir, "path", "pathed")
 	if res.exitCode != 0 {
 		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
 	}
-
-	path := strings.TrimSpace(res.stdout)
-	if path == "" {
-		t.Fatal("expected stub to print worktree path, got empty")
-	}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		t.Errorf("printed path does not exist: %s", path)
+	if strings.TrimSpace(res.stdout) != worktreePath(dir, "pathed") {
+		t.Errorf("stdout = %q, want the worktree path", res.stdout)
 	}
 }
 
-func TestOpenNonexistentBranch(t *testing.T) {
+// `open` is kept as an alias so existing muscle memory still works.
+func TestPathOpenAlias(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepoWithWorktree(t, "aliased")
+
+	res := runMori(t, dir, "open", "aliased")
+	if res.exitCode != 0 {
+		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
+	}
+	if !strings.Contains(res.stdout, "aliased") {
+		t.Errorf("stdout = %q, want the worktree path", res.stdout)
+	}
+}
+
+func TestPathNonexistentBranch(t *testing.T) {
 	t.Parallel()
 	dir := initTestRepo(t)
 
-	res := runMori(t, dir, "open", "nonexistent")
+	res := runMori(t, dir, "path", "ghost")
 	if res.exitCode == 0 {
-		t.Error("expected non-zero exit for nonexistent branch")
+		t.Error("expected non-zero exit for an unknown branch")
 	}
 	if !strings.Contains(res.stderr, "no worktree found") {
-		t.Errorf("expected 'no worktree found' in stderr, got: %q", res.stderr)
+		t.Errorf("expected 'no worktree found', got: %q", res.stderr)
 	}
 }
 
-func TestOpenNoBranch(t *testing.T) {
+func TestPathNoBranch(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	dir := initTestRepo(t)
 
-	res := runMori(t, dir, "open")
+	res := runMori(t, dir, "path")
 	if res.exitCode == 0 {
-		t.Error("expected non-zero exit when no branch given")
+		t.Error("expected non-zero exit with no branch argument")
 	}
-	if !strings.Contains(res.stderr, "Usage") {
-		t.Errorf("expected usage message in stderr, got: %q", res.stderr)
+	if !strings.Contains(res.stderr, "Usage:") {
+		t.Errorf("expected a usage message, got: %q", res.stderr)
 	}
 }
 
@@ -458,30 +510,49 @@ func TestOpenNoBranch(t *testing.T) {
 
 func TestRemoveWorktree(t *testing.T) {
 	t.Parallel()
-	dir := initTestRepoWithWorktree(t, "remove-me")
+	dir := initTestRepoWithWorktree(t, "removable")
+	wtPath := worktreePath(dir, "removable")
 
-	wtDir := filepath.Join(dir, ".claude", "worktrees", "remove-me")
-	if _, err := os.Stat(wtDir); os.IsNotExist(err) {
-		t.Fatal("setup: worktree dir should exist before remove")
-	}
-
-	res := runMori(t, dir, "remove", "remove-me", "--force")
+	res := runMori(t, dir, "remove", "removable")
 	if res.exitCode != 0 {
 		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
 	}
-
-	if !strings.Contains(res.stderr, "Removing worktree") {
-		t.Errorf("expected removal message in stderr, got: %q", res.stderr)
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("worktree directory still exists at %s", wtPath)
 	}
+}
 
-	if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
-		t.Error("worktree directory still exists after removal")
+// Uncommitted work must not disappear without the user saying so.
+func TestRemoveDirtyPromptsAndAborts(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepoWithWorktree(t, "dirty")
+	wtPath := worktreePath(dir, "dirty")
+	os.WriteFile(filepath.Join(wtPath, "scratch.txt"), []byte("wip\n"), 0o644)
+
+	res := runMoriStdin(t, dir, "n\n", "remove", "dirty")
+	if res.exitCode == 0 {
+		t.Error("expected non-zero exit when the user declines")
 	}
+	if !strings.Contains(res.stderr, "uncommitted") {
+		t.Errorf("expected an uncommitted-changes warning, got: %q", res.stderr)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Errorf("worktree should still exist after aborting: %v", err)
+	}
+}
 
-	// Verify it's gone from the list
-	listRes := runMori(t, dir, "list", "--json")
-	if strings.Contains(listRes.stdout, "remove-me") {
-		t.Error("removed worktree still appears in list")
+func TestRemoveDirtyForce(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepoWithWorktree(t, "forced")
+	wtPath := worktreePath(dir, "forced")
+	os.WriteFile(filepath.Join(wtPath, "scratch.txt"), []byte("wip\n"), 0o644)
+
+	res := runMori(t, dir, "remove", "forced", "--force")
+	if res.exitCode != 0 {
+		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("worktree directory still exists at %s", wtPath)
 	}
 }
 
@@ -489,25 +560,25 @@ func TestRemoveNonexistentBranch(t *testing.T) {
 	t.Parallel()
 	dir := initTestRepo(t)
 
-	res := runMori(t, dir, "remove", "ghost", "--force")
+	res := runMori(t, dir, "remove", "ghost")
 	if res.exitCode == 0 {
-		t.Error("expected non-zero exit for nonexistent branch")
+		t.Error("expected non-zero exit for an unknown branch")
 	}
 	if !strings.Contains(res.stderr, "no worktree found") {
-		t.Errorf("expected 'no worktree found' in stderr, got: %q", res.stderr)
+		t.Errorf("expected 'no worktree found', got: %q", res.stderr)
 	}
 }
 
 func TestRemoveNoBranch(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	dir := initTestRepo(t)
 
 	res := runMori(t, dir, "remove")
 	if res.exitCode == 0 {
-		t.Error("expected non-zero exit when no branch given")
+		t.Error("expected non-zero exit with no branch argument")
 	}
-	if !strings.Contains(res.stderr, "Usage") {
-		t.Errorf("expected usage message in stderr, got: %q", res.stderr)
+	if !strings.Contains(res.stderr, "Usage:") {
+		t.Errorf("expected a usage message, got: %q", res.stderr)
 	}
 }
 
@@ -515,226 +586,100 @@ func TestRemoveMainWorktree(t *testing.T) {
 	t.Parallel()
 	dir := initTestRepo(t)
 
-	res := runMori(t, dir, "remove", "main", "--force")
+	res := runMori(t, dir, "remove", "main")
 	if res.exitCode == 0 {
-		t.Error("expected non-zero exit when removing main worktree")
+		t.Error("expected non-zero exit when removing the main worktree")
 	}
 	if !strings.Contains(res.stderr, "cannot remove the main worktree") {
-		t.Errorf("expected 'cannot remove the main worktree' in stderr, got: %q", res.stderr)
+		t.Errorf("expected a main-worktree error, got: %q", res.stderr)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Group 6: mori status
-// ---------------------------------------------------------------------------
-
-func TestStatusBasic(t *testing.T) {
-	t.Parallel()
-	dir := initTestRepo(t)
-
-	res := runMori(t, dir, "status")
-	if res.exitCode != 0 {
-		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
-	}
-
-	if !strings.Contains(res.stdout, "1 worktrees") {
-		t.Errorf("expected '1 worktrees' in output, got: %q", res.stdout)
-	}
-}
-
-func TestStatusWithWorktrees(t *testing.T) {
-	t.Parallel()
-	dir := initTestRepo(t)
-	runMori(t, dir, "new", "st-a", "-r", dir)
-	runMori(t, dir, "new", "st-b", "-r", dir)
-
-	res := runMori(t, dir, "status")
-	if res.exitCode != 0 {
-		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
-	}
-
-	if !strings.Contains(res.stdout, "3 worktrees") {
-		t.Errorf("expected '3 worktrees', got: %q", res.stdout)
-	}
-	if !strings.Contains(res.stdout, "no session") {
-		t.Errorf("expected 'no session' in status, got: %q", res.stdout)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Group 7: Post-Create Hooks
+// Group 6: configuration
 // ---------------------------------------------------------------------------
 
 func TestNewWithProjectHooks(t *testing.T) {
 	t.Parallel()
 	dir := initTestRepo(t)
 
-	configJSON := `{"post_create": [{"name": "Install deps", "cmd": "echo hook-ran > hook-proof.txt"}]}`
-	os.WriteFile(filepath.Join(dir, ".mori.json"), []byte(configJSON), 0644)
+	config := `{"post_create": [{"name": "Marker", "cmd": "echo hooked > hook.txt"}]}`
+	os.WriteFile(filepath.Join(dir, ".mori.json"), []byte(config), 0o644)
 
 	res := runMori(t, dir, "new", "hooked", "-r", dir)
 	if res.exitCode != 0 {
 		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
 	}
 
-	if !strings.Contains(res.stderr, "Install deps") {
-		t.Errorf("expected hook name in stderr, got: %q", res.stderr)
-	}
-
-	proofFile := filepath.Join(dir, ".claude", "worktrees", "hooked", "hook-proof.txt")
-	data, err := os.ReadFile(proofFile)
+	marker := filepath.Join(worktreePath(dir, "hooked"), "hook.txt")
+	data, err := os.ReadFile(marker)
 	if err != nil {
-		t.Fatalf("hook proof file not found: %v", err)
+		t.Fatalf("post_create hook did not run: %v\nstderr: %s", err, res.stderr)
 	}
-	if !strings.Contains(string(data), "hook-ran") {
-		t.Errorf("expected 'hook-ran' in proof file, got: %q", string(data))
+	if strings.TrimSpace(string(data)) != "hooked" {
+		t.Errorf("hook wrote %q, want 'hooked'", data)
+	}
+	if !strings.Contains(res.stderr, "Marker") {
+		t.Errorf("expected the hook name in progress output, got: %q", res.stderr)
+	}
+}
+
+// A failing hook is a warning, not a failure — the worktree still exists.
+func TestNewWithFailingHook(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepo(t)
+
+	config := `{"post_create": [{"name": "Broken", "cmd": "exit 1"}]}`
+	os.WriteFile(filepath.Join(dir, ".mori.json"), []byte(config), 0o644)
+
+	res := runMori(t, dir, "new", "half-setup", "-r", dir)
+	if res.exitCode != 0 {
+		t.Fatalf("a failing hook should not fail the command: exit %d, stderr: %s", res.exitCode, res.stderr)
+	}
+	if _, err := os.Stat(worktreePath(dir, "half-setup")); err != nil {
+		t.Errorf("worktree not created: %v", err)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Group 8: End-to-End Lifecycle
+// Group 7: lifecycle
 // ---------------------------------------------------------------------------
 
 func TestFullLifecycle(t *testing.T) {
 	t.Parallel()
 	dir := initTestRepo(t)
-	branch := "lifecycle-test"
 
-	// 1. Create worktree
-	res := runMori(t, dir, "new", branch, "-r", dir)
-	if res.exitCode != 0 {
-		t.Fatalf("new: exit %d, stderr: %s", res.exitCode, res.stderr)
-	}
-
-	wtDir := filepath.Join(dir, ".claude", "worktrees", branch)
-	if _, err := os.Stat(wtDir); os.IsNotExist(err) {
-		t.Fatal("worktree dir not created")
-	}
-
-	// 2. List shows it
-	res = runMori(t, dir, "list", "--json")
-	if res.exitCode != 0 {
-		t.Fatalf("list: exit %d", res.exitCode)
-	}
-	if !strings.Contains(res.stdout, branch) {
-		t.Fatalf("list JSON missing branch %q", branch)
-	}
-
-	// 3. Open launches claude inside the worktree
-	stub, err := filepath.Abs("fixtures/claude-stub.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	res = runMoriEnv(t, dir, []string{"MORI_CLAUDE_PATH=" + stub}, "open", branch)
-	if res.exitCode != 0 {
-		t.Fatalf("open: exit %d", res.exitCode)
-	}
-	openedPath := strings.TrimSpace(res.stdout)
-	if _, err := os.Stat(openedPath); os.IsNotExist(err) {
-		t.Fatalf("opened path does not exist: %s", openedPath)
-	}
-
-	// 4. Status shows correct count
-	res = runMori(t, dir, "status")
-	if res.exitCode != 0 {
-		t.Fatalf("status: exit %d", res.exitCode)
-	}
-	if !strings.Contains(res.stdout, "2 worktrees") {
-		t.Errorf("expected '2 worktrees', got: %q", res.stdout)
-	}
-
-	// 5. Remove it
-	res = runMori(t, dir, "remove", branch, "--force")
-	if res.exitCode != 0 {
-		t.Fatalf("remove: exit %d, stderr: %s", res.exitCode, res.stderr)
-	}
-
-	// 6. List no longer shows it
-	res = runMori(t, dir, "list", "--json")
-	if strings.Contains(res.stdout, branch) {
-		t.Error("removed branch still in list")
-	}
-
-	// 7. Status shows reduced count
-	res = runMori(t, dir, "status")
-	if !strings.Contains(res.stdout, "1 worktrees") {
-		t.Errorf("expected '1 worktrees' after removal, got: %q", res.stdout)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Group 5: PR status (gh integration)
-// ---------------------------------------------------------------------------
-
-func TestListJSONOmitsPRWhenGhMissing(t *testing.T) {
-	t.Parallel()
-	dir := initTestRepoWithWorktree(t, "feat-no-gh")
-
-	// runMori already sets MORI_GH_PATH=/nonexistent/gh; so gh fetches fail.
-	res := runMori(t, dir, "list", "--json")
-	if res.exitCode != 0 {
-		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
-	}
-	if strings.Contains(res.stdout, `"pr"`) {
-		t.Errorf("expected no pr field when gh missing, got: %s", res.stdout)
-	}
-}
-
-func TestListJSONIncludesPRWithGhStub(t *testing.T) {
-	t.Parallel()
-	dir := initTestRepoWithWorktree(t, "feat-with-pr")
-
-	stub, err := filepath.Abs("fixtures/gh-stub-pr.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	res := runMoriEnv(t, dir, []string{"MORI_GH_PATH=" + stub}, "list", "--json")
-	if res.exitCode != 0 {
-		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
-	}
-
-	var items []map[string]any
-	if err := json.Unmarshal([]byte(res.stdout), &items); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, res.stdout)
-	}
-
-	var found bool
-	for _, item := range items {
-		if item["branch"] != "feat-with-pr" {
-			continue
+	// Create three worktrees.
+	for _, branch := range []string{"one", "two", "three"} {
+		if res := runMori(t, dir, "new", branch, "-r", dir); res.exitCode != 0 {
+			t.Fatalf("new %s: exit %d, stderr: %s", branch, res.exitCode, res.stderr)
 		}
-		pr, ok := item["pr"].(map[string]any)
-		if !ok {
-			t.Fatalf("expected pr object on worktree, got: %v", item)
-		}
-		if int(pr["number"].(float64)) != 42 {
-			t.Errorf("expected PR number 42, got: %v", pr["number"])
-		}
-		if pr["state"] != "open" {
-			t.Errorf("expected state=open, got: %v", pr["state"])
-		}
-		found = true
-	}
-	if !found {
-		t.Errorf("did not find feat-with-pr worktree in output: %s", res.stdout)
-	}
-}
-
-func TestListJSONOmitsPRWhenStubReturnsEmpty(t *testing.T) {
-	t.Parallel()
-	dir := initTestRepoWithWorktree(t, "feat-no-pr")
-
-	stub, err := filepath.Abs("fixtures/gh-stub-empty.sh")
-	if err != nil {
-		t.Fatal(err)
 	}
 
-	res := runMoriEnv(t, dir, []string{"MORI_GH_PATH=" + stub}, "list", "--json")
-	if res.exitCode != 0 {
-		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
+	items := listJSON(t, dir)
+	if len(items) != 4 {
+		t.Fatalf("got %d worktrees, want 4 (main + three)", len(items))
 	}
-	if strings.Contains(res.stdout, `"pr"`) {
-		t.Errorf("expected no pr field when stub returns empty, got: %s", res.stdout)
+
+	// Each one resolves back to a real directory.
+	for _, branch := range []string{"one", "two", "three"} {
+		res := runMori(t, dir, "path", branch)
+		if res.exitCode != 0 {
+			t.Fatalf("path %s: exit %d, stderr: %s", branch, res.exitCode, res.stderr)
+		}
+		if _, err := os.Stat(strings.TrimSpace(res.stdout)); err != nil {
+			t.Errorf("path %s points at a missing directory: %v", branch, err)
+		}
+	}
+
+	// Remove them all.
+	for _, branch := range []string{"one", "two", "three"} {
+		if res := runMori(t, dir, "remove", branch); res.exitCode != 0 {
+			t.Fatalf("remove %s: exit %d, stderr: %s", branch, res.exitCode, res.stderr)
+		}
+	}
+
+	if items := listJSON(t, dir); len(items) != 1 {
+		t.Errorf("got %d worktrees after cleanup, want 1 (main)", len(items))
 	}
 }

@@ -2,323 +2,168 @@ package tui
 
 import (
 	"fmt"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
-
-	"github.com/trebaud/mori/internal/insights"
 )
 
-// Layout and refresh timing.
-const (
-	tickFast      = 2 * time.Second
-	tickSlow      = 10 * time.Second
-	minViewWidth  = 60
-	minViewHeight = 12
-	splitMinWidth = 120 // minimum terminal width for the split list+insights layout
-)
-
-// Insights floating window dimensions (outer frame including border).
-const (
-	insightsFloatW = 76
-	insightsFloatH = 32
-)
-
-// Status-message bucket durations.
-const (
-	statusInfoDuration  = 2500 * time.Millisecond
-	statusErrorDuration = 4 * time.Second
-	statusLoadingMax    = 30 * time.Second
-)
-
-func contextMaxTokens(model string) int {
-	switch insights.ModelTier(model) {
-	case "opus":
-		return 1_000_000
-	default:
-		return 200_000
-	}
-}
-
+// relativeTime renders a timestamp as a short "12m ago" style string.
 func relativeTime(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
 	d := time.Since(t)
 	switch {
-	case d < 10*time.Second:
+	case d < time.Minute:
 		return "just now"
-	case d < time.Minute:
-		return fmt.Sprintf("%ds ago", int(d.Seconds()))
 	case d < time.Hour:
-		m := int(d.Minutes())
-		if m == 1 {
-			return "1m ago"
-		}
-		return fmt.Sprintf("%dm ago", m)
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
 	case d < 24*time.Hour:
-		h := int(d.Hours())
-		if h == 1 {
-			return "1h ago"
-		}
-		return fmt.Sprintf("%dh ago", h)
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 365*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	default:
-		days := int(d.Hours() / 24)
-		if days == 1 {
-			return "1d ago"
-		}
-		return fmt.Sprintf("%dd ago", days)
+		return fmt.Sprintf("%dy ago", int(d.Hours()/24/365))
 	}
 }
 
-// formatDuration is the "X ran for Y" variant of relativeTime — bare numbers
-// without an "ago" suffix.
-func formatDuration(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		h := d.Hours()
-		if h < 10 {
-			return fmt.Sprintf("%.1fh", h)
-		}
-		return fmt.Sprintf("%dh", int(h))
-	default:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	}
-}
-
-// shortPath collapses a long absolute path so it reads at a glance. Files
-// under the user's worktree show as "{repo}/{relpath}"; everything else falls
-// back to the basename plus a parent.
-func shortPath(p string) string {
-	if p == "" {
+// truncate shortens s to at most w display columns, marking the cut with an
+// ellipsis. Truncation is rune-aware so multi-byte names don't get mangled.
+func truncate(s string, w int) string {
+	if w <= 0 {
 		return ""
 	}
-	parts := strings.Split(p, string(filepath.Separator))
-	if len(parts) <= 3 {
-		return p
+	if lipgloss.Width(s) <= w {
+		return s
 	}
-	// Keep the last 3 path segments: repo/dir/file.
-	tail := parts[len(parts)-3:]
-	return "…/" + strings.Join(tail, "/")
+	runes := []rune(s)
+	for len(runes) > 0 && lipgloss.Width(string(runes))+1 > w {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + "…"
 }
 
-// stripPromptBoilerplate trims polite preambles and code fences from a user
-// prompt so the truncated preview shows actual intent.
-func stripPromptBoilerplate(s string) string {
-	s = strings.TrimSpace(s)
-	for _, prefix := range []string{"Please ", "please ", "Can you ", "can you ", "Could you ", "could you "} {
-		if strings.HasPrefix(s, prefix) {
-			s = strings.TrimSpace(s[len(prefix):])
-		}
-	}
-	// Drop leading fenced code block delimiter so the preview shows the first
-	// useful line of text rather than ``` followed by a language tag.
-	if strings.HasPrefix(s, "```") {
-		if idx := strings.IndexByte(s, '\n'); idx >= 0 {
-			s = strings.TrimSpace(s[idx+1:])
-		}
-	}
-	return s
-}
-
-// renderModelTier returns a color-coded tier badge: opus warm, sonnet cool,
-// haiku green. Helps the cost row register at a glance.
-func renderModelTier(model string) string {
-	tier := insights.ModelTier(model)
-	style := mutedStyle
-	switch tier {
-	case "opus":
-		style = lipgloss.NewStyle().Foreground(colDanger).Bold(true)
-	case "sonnet":
-		style = lipgloss.NewStyle().Foreground(colInfo)
-	case "haiku":
-		style = lipgloss.NewStyle().Foreground(colSuccess)
-	}
-	return style.Render(tier)
-}
-
-// renderStatusPillWithDuration renders the status pill with an inline
-// duration suffix ("idle 2m", "working 45s") so the user can tell a 10-second
-// pause from a 2-hour stall at a glance.
-func renderStatusPillWithDuration(status insights.StatusType, last time.Time) string {
-	glyph := statusIcon(status)
-	text := strings.ToLower(string(status))
-	if !last.IsZero() && status != insights.StatusNone {
-		text += " · " + formatDuration(time.Since(last))
-	}
-	return statusStyle(status).Padding(0, 1).Render(glyph + " " + text)
-}
-
-// toolMixBucket categorizes a tool name into one of the display buckets.
-func toolMixBucket(name string) string {
-	switch name {
-	case "Edit", "Write", "MultiEdit", "NotebookEdit":
-		return "Edit"
-	case "Read", "NotebookRead":
-		return "Read"
-	case "Bash":
-		return "Bash"
-	case "Grep", "Glob":
-		return "Search"
-	case "Task":
-		return "Task"
-	case "WebFetch", "WebSearch":
-		return "Web"
-	case "TodoWrite":
-		return "Todo"
-	case "AskUserQuestion":
-		return "Ask"
-	case "EnterPlanMode", "ExitPlanMode":
-		return "Plan"
-	}
-	if strings.HasPrefix(name, "mcp__") {
-		return "MCP"
-	}
-	return name
-}
-
-// renderToolMix collapses raw tool counts into a "Edit 12 · Read 30 · Bash 4"
-// line, ordered by count desc.
-func renderToolMix(counts map[string]int) string {
-	if len(counts) == 0 {
-		return ""
-	}
-	buckets := make(map[string]int)
-	for name, n := range counts {
-		buckets[toolMixBucket(name)] += n
-	}
-	type pair struct {
-		name string
-		n    int
-	}
-	pairs := make([]pair, 0, len(buckets))
-	for name, n := range buckets {
-		pairs = append(pairs, pair{name, n})
-	}
-	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i].n != pairs[j].n {
-			return pairs[i].n > pairs[j].n
-		}
-		return pairs[i].name < pairs[j].name
-	})
-	max := 6
-	if len(pairs) < max {
-		max = len(pairs)
-	}
-	parts := make([]string, 0, max)
-	for i := 0; i < max; i++ {
-		parts = append(parts, textStyle.Render(pairs[i].name)+" "+mutedStyle.Render(fmt.Sprintf("%d", pairs[i].n)))
-	}
-	return strings.Join(parts, mutedStyle.Render(" · "))
-}
-
-// renderSparkline draws a single-row braille sparkline of samples scaled to width.
-func renderSparkline(samples []int, width int) string {
-	if width < 2 || len(samples) == 0 {
-		return ""
-	}
-	bars := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
-	// Downsample to width if needed.
-	pts := samples
-	if len(pts) > width {
-		out := make([]int, width)
-		for i := 0; i < width; i++ {
-			start := i * len(pts) / width
-			end := (i + 1) * len(pts) / width
-			if end <= start {
-				end = start + 1
-			}
-			sum := 0
-			for j := start; j < end && j < len(pts); j++ {
-				sum += pts[j]
-			}
-			out[i] = sum / (end - start)
-		}
-		pts = out
-	}
-	minV, maxV := pts[0], pts[0]
-	for _, v := range pts {
-		if v < minV {
-			minV = v
-		}
-		if v > maxV {
-			maxV = v
-		}
-	}
-	span := maxV - minV
-	var b strings.Builder
-	for _, v := range pts {
-		idx := 0
-		if span > 0 {
-			idx = (v - minV) * (len(bars) - 1) / span
-		}
-		b.WriteRune(bars[idx])
-	}
-	return textStyle.Render(b.String())
-}
-
-// costRateAndProjection returns the running $/hour spend and the projected
-// total cost if the current rate persists until the session is 1 hour old.
-// Both are 0 when we can't tell yet (session younger than 30 seconds, or no
-// cost recorded).
-func costRateAndProjection(ins insights.Insights) (rate, projection float64) {
-	if ins.CostUSD <= 0 || ins.SessionStart.IsZero() {
-		return 0, 0
-	}
-	elapsed := time.Since(ins.SessionStart)
-	if elapsed < 30*time.Second {
-		return 0, 0
-	}
-	rate = ins.CostUSD / elapsed.Hours()
-	// Projection assumes another hour at the same rate.
-	projection = ins.CostUSD + rate
-	return
-}
-
-func wrapText(text string, width int) []string {
-	if lipgloss.Width(text) <= width {
-		return []string{text}
-	}
-
-	var lines []string
-	words := strings.Fields(text)
-	currentLine := ""
-
-	for _, word := range words {
-		projected := lipgloss.Width(word)
-		if currentLine != "" {
-			projected += lipgloss.Width(currentLine) + 1
-		}
-		if projected <= width {
-			if currentLine != "" {
-				currentLine += " "
-			}
-			currentLine += word
-		} else {
-			if currentLine != "" {
-				lines = append(lines, currentLine)
-			}
-			currentLine = word
-		}
-	}
-	if currentLine != "" {
-		lines = append(lines, currentLine)
-	}
-
-	return lines
-}
-
-// padBetween places left and right on the same line, separated to fill width.
+// padBetween places left and right on one line of exactly the given width,
+// pushing them to opposite edges with a one-column margin on each side. When
+// the two cannot both fit, right is dropped — it always carries the secondary
+// information. Callers must pass a left that fits on its own.
 func padBetween(left, right string, width int) string {
-	lw := lipgloss.Width(left)
-	rw := lipgloss.Width(right)
-	gap := width - lw - rw
+	inner := width - 2
+	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+	if rw > 0 && lw+rw+1 > inner {
+		right, rw = "", 0
+	}
+	gap := inner - lw - rw
 	if gap < 1 {
 		gap = 1
 	}
 	return " " + left + strings.Repeat(" ", gap) + right + " "
+}
+
+// firstThatFits returns the first candidate no wider than width, or the last
+// one when none fit. Used to shrink key hints on narrow terminals.
+func firstThatFits(width int, candidates ...string) string {
+	for _, c := range candidates {
+		if lipgloss.Width(c) <= width {
+			return c
+		}
+	}
+	return candidates[len(candidates)-1]
+}
+
+// wrapText breaks text into lines of at most width display columns.
+func wrapText(text string, width int) []string {
+	if lipgloss.Width(text) <= width {
+		return []string{text}
+	}
+	var lines []string
+	line := ""
+	for _, word := range strings.Fields(text) {
+		projected := lipgloss.Width(word)
+		if line != "" {
+			projected += lipgloss.Width(line) + 1
+		}
+		if projected <= width {
+			if line != "" {
+				line += " "
+			}
+			line += word
+			continue
+		}
+		if line != "" {
+			lines = append(lines, line)
+		}
+		line = word
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// renderFrame draws a rounded border around content, with an optional title
+// set into the top edge.
+func renderFrame(content string, width int, title string) string {
+	innerW := width - 2
+	if innerW < 4 {
+		innerW = 4
+	}
+
+	top := borderStyle.Render("╭" + strings.Repeat("─", innerW) + "╮")
+	if title != "" {
+		titleText := " " + title + " "
+		tail := innerW - 2 - lipgloss.Width(titleText)
+		if tail < 1 {
+			tail = 1
+		}
+		top = borderStyle.Render("╭──") + headingStyle.Render(titleText) +
+			borderStyle.Render(strings.Repeat("─", tail)+"╮")
+	}
+
+	var out strings.Builder
+	out.WriteString(top + "\n")
+	for _, ln := range strings.Split(content, "\n") {
+		pad := innerW - lipgloss.Width(ln)
+		if pad < 0 {
+			pad = 0
+		}
+		out.WriteString(borderStyle.Render("│") + ln + strings.Repeat(" ", pad) + borderStyle.Render("│") + "\n")
+	}
+	out.WriteString(borderStyle.Render("╰" + strings.Repeat("─", innerW) + "╯"))
+	return out.String()
+}
+
+// dimBackground softens the base view by re-applying the SGR faint attribute
+// after every reset, so every styled span ends up dimmed behind an overlay.
+func dimBackground(s string) string {
+	const faintOn = "\x1b[2m"
+	const reset = "\x1b[0m"
+	s = strings.ReplaceAll(s, reset, reset+faintOn)
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		if ln == "" {
+			continue
+		}
+		lines[i] = faintOn + ln + reset
+	}
+	return strings.Join(lines, "\n")
+}
+
+// overlay composites a floating card centered over the dimmed base view.
+func overlay(base, card string, width int) string {
+	cardW := lipgloss.Width(card)
+	cardH := lipgloss.Height(card)
+	baseH := lipgloss.Height(base)
+
+	x := max(0, (width-cardW)/2)
+	y := max(0, (baseH-cardH)/2)
+	if y+cardH > baseH {
+		y = max(0, baseH-cardH)
+	}
+
+	return lipgloss.NewCompositor(
+		lipgloss.NewLayer(dimBackground(base)).Z(0),
+		lipgloss.NewLayer(card).X(x).Y(y).Z(1),
+	).Render()
 }

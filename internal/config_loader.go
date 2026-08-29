@@ -14,11 +14,8 @@ func Load(repoRoot string) Config {
 	var cfg Config
 
 	// Global config
-	if home, err := os.UserHomeDir(); err == nil {
-		globalPath := filepath.Join(home, ".mori", "settings.json")
-		if parsed, ok := readConfig(globalPath); ok && parsed.PostCreate != nil {
-			cfg.PostCreate = parsed.PostCreate
-		}
+	if parsed, ok := readConfig(filepath.Join(MoriHome(), "settings.json")); ok && parsed.PostCreate != nil {
+		cfg.PostCreate = parsed.PostCreate
 	}
 
 	// Project config (replaces global)

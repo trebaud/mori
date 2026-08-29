@@ -33,7 +33,7 @@ header() {
 
 ART
   printf "${RESET}"
-  printf "${DIM}  Git worktree manager with Claude Code insights${RESET}\n"
+  printf "${DIM}  Git worktree manager${RESET}\n"
   echo ""
 }
 
@@ -62,35 +62,6 @@ check_git() {
 # Compare semver: returns 0 if $1 >= $2
 version_gte() {
   [ "$(printf '%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]
-}
-
-check_tmux() {
-  if ! command -v tmux &>/dev/null; then
-    warn "tmux is not installed — Claude Code sessions will not work.
-    macOS:  brew install tmux
-    Linux:  sudo apt install tmux  (or your distro's equivalent)"
-  else
-    ok "tmux: $(tmux -V)"
-  fi
-}
-
-check_claude() {
-  if ! command -v claude &>/dev/null; then
-    warn "Claude Code is not installed — agent insights and launching will not work.
-    Install: npm install -g @anthropic-ai/claude-code"
-  else
-    ok "claude: $(claude --version 2>/dev/null || echo 'installed')"
-  fi
-}
-
-check_gh() {
-  if ! command -v gh &>/dev/null; then
-    warn "gh (GitHub CLI) is not installed — PR status features will not work.
-    macOS:  brew install gh
-    Linux:  https://github.com/cli/cli#installation"
-  else
-    ok "gh: $(gh --version | head -1)"
-  fi
 }
 
 check_go() {
@@ -155,9 +126,6 @@ echo ""
 
 check_os
 check_git
-check_tmux
-check_claude
-check_gh
 check_go
 echo ""
 
@@ -169,8 +137,11 @@ printf "${GREEN}${BOLD}  Installation complete!${RESET}\n"
 echo ""
 printf "  ${BOLD}Run it:${RESET}\n"
 printf "    ${CYAN}mori${RESET}                              # interactive TUI\n"
-printf "    ${CYAN}mori new feat --claude${RESET}             # create worktree + launch Claude\n"
-printf "    ${CYAN}mori list${RESET}                          # list worktrees\n"
+printf "    ${CYAN}mori new feat${RESET}                     # create a worktree\n"
+printf "    ${CYAN}mori list${RESET}                         # list worktrees\n"
+echo ""
+printf "  ${BOLD}Shell integration${RESET} ${DIM}(add to your shell profile):${RESET}\n"
+printf "    ${CYAN}mc() { cd \"\$(mori)\" || return; }${RESET}\n"
 echo ""
 printf "  ${DIM}Source: $(pwd)${RESET}\n"
 printf "  ${DIM}Binary: ${INSTALL_BIN_DIR:-/usr/local/bin}/$BIN_NAME${RESET}\n"
