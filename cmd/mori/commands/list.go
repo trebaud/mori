@@ -13,7 +13,7 @@ import (
 // PrintList writes every worktree of the current repository to stdout, as a
 // table by default or as JSON for scripting.
 func PrintList(jsonOutput bool) error {
-	worktrees, err := internal.List()
+	worktrees, err := internal.ListLinked()
 	if err != nil {
 		return err
 	}
@@ -29,7 +29,6 @@ type worktreeJSON struct {
 	Branch      string `json:"branch,omitempty"`
 	DisplayPath string `json:"display_path"`
 	Head        string `json:"head,omitempty"`
-	Main        bool   `json:"main,omitempty"`
 	Detached    bool   `json:"detached,omitempty"`
 	Dirty       int    `json:"dirty"`
 	Ahead       int    `json:"ahead"`
@@ -45,7 +44,6 @@ func printJSON(worktrees []internal.Worktree) error {
 			Branch:      wt.Branch,
 			DisplayPath: wt.DisplayPath,
 			Head:        wt.Head,
-			Main:        wt.IsMain,
 			Detached:    wt.Detached,
 			Dirty:       wt.Dirty,
 			Ahead:       wt.Ahead,

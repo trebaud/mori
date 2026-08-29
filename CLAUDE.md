@@ -21,7 +21,9 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
 `$(mori path X)` are safe to capture.
 
 **`internal/`** — Core logic:
-- `worktree.go` — the `Worktree` model, `List()`, create/remove, sorting.
+- `worktree.go` — the `Worktree` model, create/remove, sorting. `List()` returns
+  every worktree git reports, including the main working tree, so lookups can
+  give precise errors; `ListLinked()` drops main and is what every display uses.
 - `paths.go` — where mori keeps state. Worktrees go in
   `~/.mori/worktrees/<repo>/<branch>`, never inside the repository: nested,
   git treats them as an untracked embedded repo and `git add -A` commits a

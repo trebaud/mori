@@ -44,7 +44,7 @@ func Run(worktrees []internal.Worktree) (string, error) {
 		return "", err
 	}
 
-	m := newModel(worktrees, repoLabel(repoRoot), git.CurrentBranch())
+	m := newModel(worktrees, repoLabel(repoRoot), git.DefaultBranch(repoRoot))
 	final, err := tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty)).Run()
 	if err != nil {
 		return "", fmt.Errorf("running TUI: %w", err)

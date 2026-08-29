@@ -77,6 +77,24 @@ func List() ([]Worktree, error) {
 	return wts, nil
 }
 
+// ListLinked returns the worktrees mori manages — git's *linked* working
+// trees, excluding the main one. The main working tree is the repository you
+// are already in, not something to switch to or delete, so it stays out of
+// every listing. Lookups that need it (removing, resolving a path) use List.
+func ListLinked() ([]Worktree, error) {
+	wts, err := List()
+	if err != nil {
+		return nil, err
+	}
+	linked := make([]Worktree, 0, len(wts))
+	for _, wt := range wts {
+		if !wt.IsMain {
+			linked = append(linked, wt)
+		}
+	}
+	return linked, nil
+}
+
 // parseList turns `git worktree list --porcelain` output into Worktrees.
 // Bare repository entries are skipped — they have no working tree to manage.
 func parseList(output string) []Worktree {

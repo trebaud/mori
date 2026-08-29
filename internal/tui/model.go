@@ -90,7 +90,7 @@ type model struct {
 	selected  int   // index into worktrees once the user picks one, else -1
 
 	repoLabel     string
-	currentBranch string
+	baseBranch    string
 	width, height int
 
 	mode      inputMode
@@ -111,20 +111,20 @@ type model struct {
 	creatingChan   chan tea.Msg
 }
 
-func newModel(worktrees []internal.Worktree, repoLabel, currentBranch string) model {
+func newModel(worktrees []internal.Worktree, repoLabel, baseBranch string) model {
 	ti := textinput.New()
 	ti.CharLimit = 60
 	ti.Prompt = ""
 
 	m := model{
-		worktrees:     worktrees,
-		selected:      -1,
-		repoLabel:     repoLabel,
-		currentBranch: currentBranch,
-		textInput:     ti,
-		mode:          modeNormal,
-		sortMode:      internal.SortDefault,
-		archived:      loadArchived(),
+		worktrees:  worktrees,
+		selected:   -1,
+		repoLabel:  repoLabel,
+		baseBranch: baseBranch,
+		textInput:  ti,
+		mode:       modeNormal,
+		sortMode:   internal.SortDefault,
+		archived:   loadArchived(),
 	}
 	m.applyFilter()
 	return m
@@ -177,6 +177,28 @@ func (m *model) adjustScroll() {
 	if m.scrollOffset < 0 {
 		m.scrollOffset = 0
 	}
+}
+
+// syncInputWidth sizes the text input for whichever prompt is showing. The
+// width also governs the placeholder: bubbles copies it into a buffer of
+// Width+1 runes, so an unset width renders exactly one character of it.
+func (m *model) syncInputWidth() {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+
+	var avail int
+	if m.mode == modeCreate {
+		// Card interior, less the frame and the "›  " prefix.
+		avail = cardWidth(width, createCardMaxWidth) - 6
+	} else {
+		// Status line, less the "/ " prefix and a trailing column.
+		avail = width - 4
+	}
+	// A text input renders Width()+1 columns — the value or placeholder plus a
+	// trailing cursor cell — so ask for one less than the room we have.
+	m.textInput.SetWidth(max(8, avail-1))
 }
 
 // --- State helpers ---

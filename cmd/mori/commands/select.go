@@ -11,7 +11,7 @@ import (
 // Select launches the TUI and prints the picked worktree path on stdout, so
 // `cd "$(mori)"` lands the user in that worktree.
 func Select() error {
-	worktrees, err := internal.List()
+	worktrees, err := internal.ListLinked()
 	if err != nil {
 		return err
 	}

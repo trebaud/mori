@@ -20,7 +20,7 @@ That's the whole scope. No agent tracking, no PR status, no session management.
 
 ## Features
 
-- Browse every worktree in the repo, with dirty count, ahead/behind, and last commit
+- Browse the repo's worktrees, with dirty count, ahead/behind, and last commit
 - Create and delete worktrees from the TUI or the CLI
 - Pick a worktree and `cd` into it (mori prints the path on exit)
 - Worktrees live outside the repo, so `git status` stays clean
@@ -89,6 +89,10 @@ captures the path.
 | `x` / `X` | Archive / show archived |
 | `?` | Help |
 | `q`, `ctrl+c` | Quit |
+
+Listings cover git's *linked* worktrees. The repository's own working tree —
+the one you're standing in — isn't something to switch to or delete, so it
+never appears.
 
 ## Where worktrees live
 

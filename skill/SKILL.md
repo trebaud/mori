@@ -43,8 +43,10 @@ never shows up in `git status`.
 ## Usage Notes
 
 - **Prefer `--json`** when you need to reason about worktree state. Fields:
-  `path`, `branch`, `display_path`, `head`, `main`, `detached`, `dirty`,
-  `ahead`, `behind`, `last_commit`.
+  `path`, `branch`, `display_path`, `head`, `detached`, `dirty`, `ahead`,
+  `behind`, `last_commit`.
+- **Listings cover linked worktrees only.** The repository's own working tree
+  is never included — use `git rev-parse --show-toplevel` for that.
 - **Never run bare `mori`** — it opens an interactive TUI. Use `mori list` or
   `mori path` instead.
 - **`mori new` prints the directory on stdout**, so you can `cd "$(mori new feat)"`.

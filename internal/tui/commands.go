@@ -24,7 +24,7 @@ func tickCmd() tea.Cmd {
 // refreshCmd re-queries git off the UI goroutine.
 func refreshCmd() tea.Cmd {
 	return func() tea.Msg {
-		wts, err := internal.List()
+		wts, err := internal.ListLinked()
 		return refreshedMsg{worktrees: wts, err: err}
 	}
 }

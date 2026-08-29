@@ -149,9 +149,6 @@ func (m model) renderCard(idx, width int) []string {
 	}
 
 	label := wt.Label()
-	if wt.IsMain {
-		label = "★ " + label
-	}
 	if m.archived[wt.Branch] {
 		label = "◌ " + label
 	}
@@ -243,6 +240,10 @@ func (m model) renderFooter(width int) string {
 
 // --- Floating cards ---
 
+// createCardMaxWidth caps the "new worktree" card; the text input is sized
+// against it in syncInputWidth.
+const createCardMaxWidth = 64
+
 // cardWidth clamps an overlay card to a comfortable reading width.
 func cardWidth(width, maxW int) int {
 	w := width - 8
@@ -256,12 +257,12 @@ func cardWidth(width, maxW int) int {
 }
 
 func (m model) renderCreateCard(width int) string {
-	w := cardWidth(width, 64)
+	w := cardWidth(width, createCardMaxWidth)
 
 	var c strings.Builder
 	c.WriteString("\n")
 	c.WriteString(" " + titleStyle.Render("›") + "  " + m.textInput.View() + "\n\n")
-	c.WriteString(" " + dimStyle.Render("branches off ") + mutedStyle.Render(m.currentBranch) + "\n")
+	c.WriteString(" " + dimStyle.Render("branches off ") + mutedStyle.Render(m.baseBranch) + "\n")
 	c.WriteString(" " + dimStyle.Render("leave empty for a random name") + "\n\n")
 	c.WriteString(" " + mutedStyle.Render("[enter] create   [esc] cancel") + "\n")
 
@@ -326,7 +327,7 @@ func (m model) renderDeleteCard(width int) string {
 		c.WriteString("\n")
 	}
 	if wt.Ahead > 0 {
-		for _, ln := range wrapText(fmt.Sprintf("⚠ %d commit(s) not on %s", wt.Ahead, m.baseLabel()), w-4) {
+		for _, ln := range wrapText(fmt.Sprintf("⚠ %d commit(s) not on %s", wt.Ahead, m.baseBranch), w-4) {
 			c.WriteString(" " + warnStyle.Render(ln) + "\n")
 		}
 		c.WriteString("\n")
@@ -335,16 +336,6 @@ func (m model) renderDeleteCard(width int) string {
 	c.WriteString(" " + mutedStyle.Render("[y] delete   [esc] cancel") + "\n")
 
 	return renderFrame(c.String(), w, "delete worktree")
-}
-
-// baseLabel names the branch a worktree is compared against in warnings.
-func (m model) baseLabel() string {
-	for _, wt := range m.worktrees {
-		if wt.IsMain && wt.Branch != "" {
-			return wt.Branch
-		}
-	}
-	return "the default branch"
 }
 
 // --- Help ---

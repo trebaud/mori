@@ -16,6 +16,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.syncInputWidth()
 		m.adjustScroll()
 		return m, nil
 
@@ -179,21 +180,21 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		m.mode = modeCreate
 		m.textInput.SetValue("")
 		m.textInput.Placeholder = "branch name"
+		m.syncInputWidth()
 		return m, m.textInput.Focus()
 
 	case "d", "D":
-		if wt := m.selectedWorktree(); wt != nil {
-			if wt.IsMain {
-				m.statusMsg = errorStatus("cannot delete the main worktree")
-			} else {
-				m.mode = modeConfirmDelete
-				m.deleteTarget = m.cursor
-			}
+		// The list holds only linked worktrees; the IsMain check backstops
+		// that invariant because deleting is irreversible.
+		if wt := m.selectedWorktree(); wt != nil && !wt.IsMain {
+			m.mode = modeConfirmDelete
+			m.deleteTarget = m.cursor
 		}
 
 	case "/":
 		m.mode = modeSearch
 		m.textInput.Placeholder = "filter by branch or path…"
+		m.syncInputWidth()
 		return m, m.textInput.Focus()
 
 	case "s":
@@ -207,8 +208,6 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 	case "x":
 		if wt := m.selectedWorktree(); wt != nil {
 			switch {
-			case wt.IsMain:
-				m.statusMsg = errorStatus("cannot archive the main worktree")
 			case wt.Branch == "":
 				// The archive is keyed by branch, so detached heads can't join.
 				m.statusMsg = errorStatus("cannot archive a detached worktree")

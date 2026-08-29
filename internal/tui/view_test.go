@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -12,11 +13,7 @@ import (
 
 func testWorktrees(n int) []internal.Worktree {
 	wts := make([]internal.Worktree, 0, n)
-	wts = append(wts, internal.Worktree{
-		Path: "/repo", Branch: "main", DisplayPath: "~/repo", Head: "aaaaaaa",
-		IsMain: true, LastCommit: time.Now().Add(-2 * time.Hour),
-	})
-	for i := 1; i < n; i++ {
+	for i := 1; i <= n; i++ {
 		wts = append(wts, internal.Worktree{
 			Path:        "/home/t/.mori/worktrees/repo/wt",
 			Branch:      "feat/" + strings.Repeat("x", i),
@@ -96,11 +93,48 @@ func TestRenderCardRowsShareWidth(t *testing.T) {
 }
 
 func TestViewNeverExceedsTerminalWidth(t *testing.T) {
+	modes := map[string]inputMode{
+		"normal": modeNormal,
+		"search": modeSearch,
+		"create": modeCreate,
+		"delete": modeConfirmDelete,
+	}
+	for name, mode := range modes {
+		for _, width := range []int{50, 80, 120} {
+			m := newTestModel(t, 6, width, 24)
+			m.mode = mode
+			m.textInput.Placeholder = "filter by branch or path…"
+			m.syncInputWidth()
+			for _, line := range strings.Split(m.View().Content, "\n") {
+				if w := lipgloss.Width(line); w > width {
+					t.Errorf("%s width=%d: line of %d columns: %q", name, width, w, line)
+				}
+			}
+		}
+	}
+}
+
+// An over-wide input row pushed the card's right border out of alignment.
+func TestOverlayCardRowsShareWidth(t *testing.T) {
 	for _, width := range []int{50, 80, 120} {
-		m := newTestModel(t, 6, width, 24)
-		for _, line := range strings.Split(m.View().Content, "\n") {
-			if w := lipgloss.Width(line); w > width {
-				t.Errorf("width=%d: line of %d columns: %q", width, w, line)
+		m := newTestModel(t, 3, width, 24)
+		m.mode = modeCreate
+		m.textInput.Placeholder = "branch name"
+		m.syncInputWidth()
+
+		cards := map[string]string{
+			"create": m.renderCreateCard(width),
+			"delete": m.renderDeleteCard(width),
+		}
+		for name, card := range cards {
+			rows := strings.Split(card, "\n")
+			want := lipgloss.Width(rows[0])
+			for i, row := range rows {
+				if got := lipgloss.Width(row); got != want {
+					t.Errorf("%s width=%d: row %d is %d columns, want %d:\n%s",
+						name, width, i, got, want, plain(card))
+					break
+				}
 			}
 		}
 	}
@@ -121,6 +155,35 @@ func TestTruncate(t *testing.T) {
 	for _, c := range cases {
 		if got := truncate(c.in, c.w); got != c.want {
 			t.Errorf("truncate(%q, %d) = %q, want %q", c.in, c.w, got, c.want)
+		}
+	}
+}
+
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// plain strips styling. bubbles renders the placeholder's first character
+// separately as the virtual cursor, so the text is only contiguous once the
+// escape sequences between spans are gone.
+func plain(s string) string { return ansiPattern.ReplaceAllString(s, "") }
+
+// bubbles copies the placeholder into a buffer of Width+1 runes, so an input
+// left at width 0 renders exactly one character of it ("b" for "branch name").
+func TestPromptPlaceholdersRenderInFull(t *testing.T) {
+	for _, width := range []int{50, 80, 120} {
+		create := newTestModel(t, 3, width, 24)
+		create.mode = modeCreate
+		create.textInput.Placeholder = "branch name"
+		create.syncInputWidth()
+		if got := plain(create.renderCreateCard(width)); !strings.Contains(got, "branch name") {
+			t.Errorf("width=%d: create card lost its placeholder:\n%s", width, got)
+		}
+
+		search := newTestModel(t, 3, width, 24)
+		search.mode = modeSearch
+		search.textInput.Placeholder = "filter by branch or path…"
+		search.syncInputWidth()
+		if got := plain(search.renderStatusLine()); !strings.Contains(got, "filter by branch or path…") {
+			t.Errorf("width=%d: search line lost its placeholder: %q", width, got)
 		}
 	}
 }
