@@ -104,9 +104,10 @@ func waitStepCmd(ch chan tea.Msg) tea.Cmd {
 	}
 }
 
-// spinnerTickCmd schedules the next spinner frame.
+// spinnerTickCmd schedules the next spinner frame. 80ms is the readable pace
+// for braille dots — the same interval the CLI's spinner runs at.
 func spinnerTickCmd() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
+	return tea.Tick(80*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
 }
 
 // removeWorktreeCmd removes a worktree and emits worktreeRemovedMsg.

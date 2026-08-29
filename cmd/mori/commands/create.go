@@ -32,7 +32,7 @@ func Create(opts CreateOptions) error {
 		branch = "wt-" + internal.RandomSuffix()
 	}
 
-	fmt.Fprintf(os.Stderr, "\n  \033[1;35m◆ %s\033[0m\n\n", branch)
+	fmt.Fprintf(progress, "\n  \033[1;35m◆ %s\033[0m\n\n", branch)
 
 	var spin *stepSpinner
 	cb := &internal.HookCallbacks{
@@ -49,11 +49,11 @@ func Create(opts CreateOptions) error {
 
 	result, err := internal.CreateWorktree(absRepo, branch, cb)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "    \033[1;31m✖\033[0m %v\n", err)
+		fmt.Fprintf(progress, "    \033[1;31m✖\033[0m %v\n", err)
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "\n  \033[0;90m%s\033[0m\n\n", result.Dir)
+	fmt.Fprintf(progress, "\n  \033[0;90m%s\033[0m\n\n", result.Dir)
 	fmt.Fprintln(os.Stdout, result.Dir)
 
 	return nil
@@ -78,7 +78,7 @@ func startSpinner(name string) *stepSpinner {
 		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		i := 0
 		render := func() {
-			fmt.Fprintf(os.Stderr, "\r\033[K    \033[1;36m%s\033[0m %s...", frames[i], name)
+			fmt.Fprintf(progress, "\r\033[K    \033[1;36m%s\033[0m %s...", frames[i], name)
 		}
 		render()
 		ticker := time.NewTicker(80 * time.Millisecond)
@@ -103,5 +103,5 @@ func (s *stepSpinner) finish(success bool) {
 	if !success {
 		mark = "\033[1;33m⚠\033[0m"
 	}
-	fmt.Fprintf(os.Stderr, "\r\033[K    %s... %s\n", s.name, mark)
+	fmt.Fprintf(progress, "\r\033[K    %s... %s\n", s.name, mark)
 }

@@ -128,10 +128,10 @@ func scrollHint(above, below int) string {
 // renderEmpty draws the empty state a third of the way down the list area,
 // where the eye already is, rather than pinned under the header.
 func (m model) renderEmpty(height int) []string {
-	msg, hint := "no worktrees yet", []keyHint{{"n", "create one"}}
+	msg, hint := "no worktrees yet", []keyHint{{key: "n", label: "create one"}}
 	if m.textInput.Value() != "" {
 		msg = "no worktrees match “" + m.textInput.Value() + "”"
-		hint = []keyHint{{"esc", "clear the filter"}}
+		hint = []keyHint{{key: "esc", label: "clear the filter"}}
 	}
 
 	lines := make([]string, 0, height)
@@ -147,6 +147,7 @@ func (m model) renderEmpty(height int) []string {
 // to come from this set, or the tint comes out full of holes.
 type cardStyles struct {
 	name, path, meta, head, dirty, clean, fill lipgloss.Style
+	nameMatch, pathMatch                       lipgloss.Style
 }
 
 func newCardStyles(selected bool) cardStyles {
@@ -159,6 +160,7 @@ func newCardStyles(selected bool) cardStyles {
 		clean: cleanStyle,
 		fill:  lipgloss.NewStyle(),
 	}
+	cs.nameMatch, cs.pathMatch = markMatch(cs.name), markMatch(cs.path)
 	if !selected {
 		return cs
 	}
@@ -170,6 +172,8 @@ func newCardStyles(selected bool) cardStyles {
 	cs.head = tint(cs.head)
 	cs.dirty = tint(cs.dirty)
 	cs.clean = tint(cs.clean)
+	cs.nameMatch = tint(markMatch(cs.name))
+	cs.pathMatch = tint(cs.pathMatch)
 	cs.fill = rowStyle
 	return cs
 }
@@ -200,14 +204,18 @@ func (m model) renderCard(idx, width int) []string {
 	// Every row is padded to the full width so the tint runs edge to edge, and
 	// so the age and HEAD line up down the list: the bar costs 2 columns on row
 	// 1 and 3 on rows 2 and 3, and padBetween adds a margin on each side.
+	query := strings.TrimSpace(m.textInput.Value())
+
 	age := relativeTime(wt.LastCommit)
 	labelW := width - 4 - lipgloss.Width(age) - 1
 	first := bar + padBetweenFill(
-		cs.name.Render(truncate(label, labelW)), cs.meta.Render(age), width-2, cs.fill)
+		highlightMatch(truncate(label, labelW), query, cs.name, cs.nameMatch),
+		cs.meta.Render(age), width-2, cs.fill)
 
 	pathW := width - 5 - lipgloss.Width(wt.Head) - 1
 	second := cont + cs.fill.Render(" ") + padBetweenFill(
-		cs.path.Render(truncate(wt.DisplayPath, pathW)), cs.head.Render(wt.Head), width-3, cs.fill)
+		highlightMatch(truncate(wt.DisplayPath, pathW), query, cs.path, cs.pathMatch),
+		cs.head.Render(wt.Head), width-3, cs.fill)
 
 	third := cont + cs.fill.Render(" ") + padBetweenFill(
 		m.renderGitState(wt, cs), "", width-3, cs.fill)
@@ -261,19 +269,39 @@ func (m model) renderStatusLine() string {
 	}
 }
 
+// footerHints is the footer's key row for the current state. It lists only
+// what is actionable right now: no [enter] cd with nothing to cd into, and
+// [esc] clear filter only while a filter is narrowing the list.
+func (m model) footerHints() []keyHint {
+	hints := []keyHint{}
+	if len(m.filtered) > 0 {
+		hints = append(hints, keyHint{key: "enter", label: "cd"})
+	}
+	hints = append(hints, keyHint{key: "n", label: "new"})
+	if len(m.filtered) > 0 {
+		hints = append(hints, keyHint{key: "d", label: "delete", prio: 1})
+		if wt := m.selectedWorktree(); wt != nil && m.archived[wt.Branch] {
+			hints = append(hints, keyHint{key: "x", label: "unarchive", prio: 3})
+		}
+	}
+	if m.textInput.Value() != "" {
+		hints = append(hints, keyHint{key: "esc", label: "clear filter"})
+	} else if len(m.filtered) > 0 {
+		hints = append(hints, keyHint{key: "/", label: "filter", prio: 2})
+	}
+	return append(hints, keyHint{key: "?", label: "help"}, keyHint{key: "q", label: "quit"})
+}
+
 func (m model) renderFooter(width int) string {
 	if m.mode == modeSearch {
-		return " " + renderHints(firstHintsThatFit(width-2,
-			[]keyHint{{"enter", "apply"}, {"esc", "clear"}, {"↑/↓", "navigate"}},
-			[]keyHint{{"enter", "apply"}, {"esc", "clear"}},
-			[]keyHint{{"esc", "clear"}}))
+		return " " + renderHints(fitHints(width-2, []keyHint{
+			{key: "enter", label: "apply"},
+			{key: "esc", label: "clear"},
+			{key: "↑/↓", label: "navigate", prio: 1},
+		}))
 	}
 
-	left := renderHints(firstHintsThatFit(width-2,
-		[]keyHint{{"enter", "cd"}, {"n", "new"}, {"d", "delete"}, {"/", "filter"}, {"?", "help"}, {"q", "quit"}},
-		[]keyHint{{"enter", "cd"}, {"n", "new"}, {"d", "delete"}, {"?", "help"}, {"q", "quit"}},
-		[]keyHint{{"enter", "cd"}, {"n", "new"}, {"?", "help"}, {"q", "quit"}},
-		[]keyHint{{"?", "help"}, {"q", "quit"}}))
+	left := renderHints(fitHints(width-2, m.footerHints()))
 
 	var indicators []string
 	if m.sortMode != internal.SortDefault {
@@ -311,7 +339,7 @@ func (m model) renderCreateCard(width int) string {
 	c.WriteString(" " + titleStyle.Render("›") + "  " + m.textInput.View() + "\n\n")
 	c.WriteString(" " + dimStyle.Render("branches off ") + mutedStyle.Render(m.baseBranch) + "\n")
 	c.WriteString(" " + dimStyle.Render("leave empty for a random name") + "\n\n")
-	c.WriteString(" " + renderHints([]keyHint{{"enter", "create"}, {"esc", "cancel"}}) + "\n")
+	c.WriteString(" " + renderHints([]keyHint{{key: "enter", label: "create"}, {key: "esc", label: "cancel"}}) + "\n")
 
 	return renderFrame(c.String(), w, "new worktree")
 }
@@ -380,7 +408,7 @@ func (m model) renderDeleteCard(width int) string {
 		c.WriteString("\n")
 	}
 
-	c.WriteString(" " + renderHints([]keyHint{{"y", "delete"}, {"esc", "cancel"}}) + "\n")
+	c.WriteString(" " + renderHints([]keyHint{{key: "y", label: "delete"}, {key: "esc", label: "cancel"}}) + "\n")
 
 	return renderFrame(c.String(), w, "delete worktree")
 }
@@ -436,6 +464,6 @@ func (m model) viewHelp(width int) string {
 		"",
 		renderFrame(c.String(), w, "keybindings"),
 		"",
-		" " + renderHints([]keyHint{{"?", "close"}, {"q", "quit"}}),
+		" " + renderHints([]keyHint{{key: "?", label: "close"}, {key: "q", label: "quit"}}),
 	}, "\n")
 }

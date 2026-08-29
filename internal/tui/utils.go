@@ -76,10 +76,32 @@ func rule(width int) string {
 	return " " + borderStyle.Render(strings.Repeat("─", width-2)) + " "
 }
 
+// highlightMatch renders s in base, with the first case-insensitive run of
+// query drawn in match. The match style underlines as well as colors, so the
+// hit is still visible with color stripped or on a monochrome terminal.
+//
+// s must already be truncated: a hit cut off by truncation simply highlights
+// the part that survived.
+func highlightMatch(s, query string, base, match lipgloss.Style) string {
+	if query == "" {
+		return base.Render(s)
+	}
+	i := strings.Index(strings.ToLower(s), strings.ToLower(query))
+	if i < 0 {
+		return base.Render(s)
+	}
+	end := i + len(query)
+	return base.Render(s[:i]) + match.Render(s[i:end]) + base.Render(s[end:])
+}
+
 // --- Key hints ---
 
-// keyHint is one "[k] label" pair in a footer or a card's action row.
-type keyHint struct{ key, label string }
+// keyHint is one "[k] label" pair in a footer or a card's action row. prio
+// orders what a narrow terminal sheds first: 0 never drops, higher goes first.
+type keyHint struct {
+	key, label string
+	prio       int
+}
 
 // hintsWidth is the rendered width of a hint row, measured on the plain text.
 func hintsWidth(hints []keyHint) int {
@@ -108,15 +130,27 @@ func renderHints(hints []keyHint) string {
 	return b.String()
 }
 
-// firstHintsThatFit picks the first hint row no wider than width, falling back
-// to the last (shortest) candidate. Used to shed hints on narrow terminals.
-func firstHintsThatFit(width int, sets ...[]keyHint) []keyHint {
-	for _, s := range sets {
-		if hintsWidth(s) <= width {
-			return s
+// fitHints drops the least important hints until the row fits, so a footer
+// assembled from the current state still degrades gracefully on a narrow
+// terminal. The prio-0 hints are kept whether they fit or not — a footer
+// without [q] quit is worse than one that wraps.
+func fitHints(width int, hints []keyHint) []keyHint {
+	maxPrio := 0
+	for _, h := range hints {
+		maxPrio = max(maxPrio, h.prio)
+	}
+	for cap := maxPrio; cap >= 0; cap-- {
+		kept := make([]keyHint, 0, len(hints))
+		for _, h := range hints {
+			if h.prio <= cap {
+				kept = append(kept, h)
+			}
+		}
+		if hintsWidth(kept) <= width || cap == 0 {
+			return kept
 		}
 	}
-	return sets[len(sets)-1]
+	return hints
 }
 
 // firstThatFits returns the first candidate no wider than width, or the last

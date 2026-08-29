@@ -26,19 +26,19 @@ func Remove(branch string, force bool) error {
 	}
 
 	if !force && target.Dirty > 0 {
-		fmt.Fprintf(os.Stderr, "Warning: worktree '%s' has %d uncommitted file(s).\n", branch, target.Dirty)
-		fmt.Fprintf(os.Stderr, "Remove anyway? [y/N] ")
+		fmt.Fprintf(progress, "Warning: worktree '%s' has %d uncommitted file(s).\n", branch, target.Dirty)
+		fmt.Fprintf(progress, "Remove anyway? [y/N] ")
 		answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		if strings.TrimSpace(strings.ToLower(answer)) != "y" {
 			return fmt.Errorf("aborted")
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Removing worktree '%s'... ", branch)
+	fmt.Fprintf(progress, "Removing worktree '%s'... ", branch)
 	if err := internal.RemoveWorktree(target.Path, true); err != nil {
-		fmt.Fprintf(os.Stderr, "\033[1;31m✖\033[0m\n")
+		fmt.Fprintf(progress, "\033[1;31m✖\033[0m\n")
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "\033[1;32m✔\033[0m\n")
+	fmt.Fprintf(progress, "\033[1;32m✔\033[0m\n")
 	return nil
 }

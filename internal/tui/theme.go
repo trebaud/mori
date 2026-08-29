@@ -89,3 +89,10 @@ func ApplyTheme(isDark bool) {
 func DetectAndApplyTheme(tty *os.File) {
 	ApplyTheme(lipgloss.HasDarkBackground(tty, tty))
 }
+
+// markMatch decorates a style so the run of text a filter matched stands out
+// from the text around it. It underlines as well as colors, so the hit is
+// still visible under NO_COLOR and on monochrome terminals.
+func markMatch(st lipgloss.Style) lipgloss.Style {
+	return st.Foreground(colAccent).Underline(true)
+}
