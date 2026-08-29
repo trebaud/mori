@@ -63,7 +63,7 @@ func (m model) viewTooSmall() string {
 
 func (m model) viewList(width int) string {
 	lines := []string{"", m.renderTopBar(width), rule(width)}
-	lines = append(lines, m.renderCards(width)...)
+	lines = append(lines, m.renderRows(width)...)
 	lines = append(lines, m.renderStatusLine(), m.renderFooter(width))
 	return strings.Join(lines, "\n")
 }
@@ -87,23 +87,22 @@ func (m model) renderTopBar(width int) string {
 	return padBetween(left, right, width)
 }
 
-// renderCards renders the scrolling viewport of worktree cards, padded to a
+// renderRows renders the scrolling viewport of worktree rows, padded to a
 // fixed height so the footer never shifts as worktrees come and go.
-func (m model) renderCards(width int) []string {
+func (m model) renderRows(width int) []string {
 	height := m.listHeight()
 	var lines []string
 
 	if len(m.filtered) == 0 {
 		lines = append(lines, m.renderEmpty(height)...)
 	} else {
-		end := min(m.scrollOffset+m.visibleCards(), len(m.filtered))
+		cols := m.rowColumns(width)
+		end := min(m.scrollOffset+m.visibleRows(), len(m.filtered))
 		for i := m.scrollOffset; i < end; i++ {
-			lines = append(lines, m.renderCard(i, width)...)
+			lines = append(lines, m.renderRow(i, width, cols))
 		}
-		// Reuse the last card's spacer row for the scroll hint so the
-		// viewport height stays exactly visibleCards() cards tall.
 		if hint := scrollHint(m.scrollOffset, len(m.filtered)-end); hint != "" {
-			lines[len(lines)-1] = "  " + dimStyle.Render(hint)
+			lines = append(lines, "  "+dimStyle.Render(hint))
 		}
 	}
 
@@ -141,113 +140,163 @@ func (m model) renderEmpty(height int) []string {
 	return append(lines, "  "+mutedStyle.Render(msg), "", "  "+renderHints(hint))
 }
 
-// cardStyles is the style set one card draws with. The selected card lays a
-// faint tint under its whole row, and a background only covers what a style
-// actually paints — so every span, separator and run of padding on the row has
-// to come from this set, or the tint comes out full of holes.
-type cardStyles struct {
-	name, path, meta, head, dirty, clean, fill lipgloss.Style
-	nameMatch, pathMatch                       lipgloss.Style
+// --- Rows ---
+
+// rowPalette is the style set one row draws with. The selected row lays a
+// faint tint under its full width, and a background only covers what a style
+// actually paints — so every span and every run of padding on the row has to
+// come from this set, or the tint comes out full of holes.
+type rowPalette struct {
+	name, meta, head, dirty, clean, fill lipgloss.Style
+	nameMatch                            lipgloss.Style
 }
 
-func newCardStyles(selected bool) cardStyles {
-	cs := cardStyles{
+func newRowPalette(selected bool) rowPalette {
+	p := rowPalette{
 		name:  textStyle,
-		path:  mutedStyle,
 		meta:  mutedStyle,
 		head:  dimStyle,
 		dirty: dirtyStyle,
 		clean: cleanStyle,
 		fill:  lipgloss.NewStyle(),
 	}
-	cs.nameMatch, cs.pathMatch = markMatch(cs.name), markMatch(cs.path)
+	p.nameMatch = markMatch(p.name)
 	if !selected {
-		return cs
+		return p
 	}
 
 	tint := func(st lipgloss.Style) lipgloss.Style { return st.Background(colRowBg) }
-	cs.name = tint(cs.name.Bold(true))
-	cs.path = tint(cs.path)
-	cs.meta = tint(cs.meta)
-	cs.head = tint(cs.head)
-	cs.dirty = tint(cs.dirty)
-	cs.clean = tint(cs.clean)
-	cs.nameMatch = tint(markMatch(cs.name))
-	cs.pathMatch = tint(cs.pathMatch)
-	cs.fill = rowStyle
-	return cs
+	p.name = tint(p.name.Bold(true))
+	p.meta = tint(p.meta)
+	p.head = tint(p.head)
+	p.dirty = tint(p.dirty)
+	p.clean = tint(p.clean)
+	p.nameMatch = tint(markMatch(p.name))
+	p.fill = rowStyle
+	return p
 }
 
-// renderCard draws one worktree as three rows plus a trailing blank row:
-//
-//	▌ feat/parser                              12m ago
-//	│   ~/.mori/worktrees/mori/feat-parser     a1b2c3d
-//	│   ● 3 files changed · 2 ahead
-func (m model) renderCard(idx, width int) []string {
-	wt := m.worktrees[m.filtered[idx]]
-	selected := idx == m.cursor
-	cs := newCardStyles(selected)
-
-	// The accent bar carries the selection down all three rows; the tint
-	// behind it is what makes the card read as one block.
-	bar, cont := cs.fill.Render("  "), cs.fill.Render("  ")
-	if selected {
-		bar = selectedStyle.Background(colRowBg).Render("▌") + cs.fill.Render(" ")
-		cont = selectedStyle.Background(colRowBg).Render("│") + cs.fill.Render(" ")
-	}
-
-	label := wt.Label()
-	if m.archived[wt.Branch] {
-		label = "◌ " + label
-	}
-
-	// Every row is padded to the full width so the tint runs edge to edge, and
-	// so the age and HEAD line up down the list: the bar costs 2 columns on row
-	// 1 and 3 on rows 2 and 3, and padBetween adds a margin on each side.
-	query := strings.TrimSpace(m.textInput.Value())
-
-	age := relativeTime(wt.LastCommit)
-	labelW := width - 4 - lipgloss.Width(age) - 1
-	first := bar + padBetweenFill(
-		highlightMatch(truncate(label, labelW), query, cs.name, cs.nameMatch),
-		cs.meta.Render(age), width-2, cs.fill)
-
-	pathW := width - 5 - lipgloss.Width(wt.Head) - 1
-	second := cont + cs.fill.Render(" ") + padBetweenFill(
-		highlightMatch(truncate(wt.DisplayPath, pathW), query, cs.path, cs.pathMatch),
-		cs.head.Render(wt.Head), width-3, cs.fill)
-
-	third := cont + cs.fill.Render(" ") + padBetweenFill(
-		m.renderGitState(wt, cs), "", width-3, cs.fill)
-
-	return []string{first, second, third, ""}
+// rowColumns holds the width of each column. A zero width hides the column:
+// a narrow terminal sheds HEAD first, then the ahead/behind counts, then the
+// age, rather than squeezing the branch name down to nothing.
+type rowColumns struct {
+	branch, state, sync, age, head int
+	slack                          int // spare columns, held before the age
 }
 
-// renderGitState is the "● 3 files changed · 2 ahead" line of a card.
-func (m model) renderGitState(wt internal.Worktree, cs cardStyles) string {
-	var parts []string
+// minBranchWidth is the narrowest a branch column may get before the row
+// starts dropping columns to its right.
+const minBranchWidth = 18
 
-	if wt.Dirty > 0 {
-		noun := "files"
-		if wt.Dirty == 1 {
-			noun = "file"
+// fixedWidth is what every column except the branch costs, gaps included.
+func (c rowColumns) fixedWidth() int {
+	w := 0
+	for _, col := range []struct{ gap, width int }{
+		{1, c.state}, {1, c.sync}, {2, c.age}, {2, c.head},
+	} {
+		if col.width > 0 {
+			w += col.gap + col.width
 		}
-		parts = append(parts, cs.dirty.Render(fmt.Sprintf("● %d %s changed", wt.Dirty, noun)))
-	} else {
-		parts = append(parts, cs.clean.Render("○ clean"))
+	}
+	return w
+}
+
+// rowColumns measures the columns against every worktree on show, not just
+// the visible slice, so they stay put while the list scrolls.
+//
+// The branch takes only the width it needs. Whatever is left over is held as
+// slack before the age, which pins the age and HEAD to the right edge — so a
+// wide terminal reads as name-on-the-left, time-on-the-right rather than one
+// column stretched across a void.
+func (m model) rowColumns(width int) rowColumns {
+	c := rowColumns{}
+	natural := 0
+	for _, i := range m.filtered {
+		wt := m.worktrees[i]
+		natural = max(natural, lipgloss.Width(m.rowLabel(wt)))
+		c.state = max(c.state, lipgloss.Width(gitStateText(wt)))
+		c.sync = max(c.sync, lipgloss.Width(syncText(wt)))
+		c.age = max(c.age, lipgloss.Width(relativeTime(wt.LastCommit)))
+		c.head = max(c.head, lipgloss.Width(wt.Head))
 	}
 
+	// The bar costs 2 columns and the row keeps a 1-column right margin.
+	avail := func() int { return width - 3 - c.fixedWidth() }
+	for _, drop := range []*int{&c.head, &c.sync, &c.age} {
+		if avail() >= minBranchWidth {
+			break
+		}
+		*drop = 0
+	}
+	c.branch = max(6, min(natural, avail()))
+	c.slack = max(0, avail()-c.branch)
+	return c
+}
+
+// rowLabel is what the branch column shows for a worktree.
+func (m model) rowLabel(wt internal.Worktree) string {
+	if m.archived[wt.Branch] {
+		return "◌ " + wt.Label()
+	}
+	return wt.Label()
+}
+
+// gitStateText and syncText are the plain forms of the two git columns. The
+// columns are measured on these, then rendered from them.
+func gitStateText(wt internal.Worktree) string {
+	if wt.Dirty > 0 {
+		return fmt.Sprintf("● %d changed", wt.Dirty)
+	}
+	return "○ clean"
+}
+
+func syncText(wt internal.Worktree) string {
 	switch {
 	case wt.Ahead > 0 && wt.Behind > 0:
-		parts = append(parts, cs.meta.Render(fmt.Sprintf("%d ahead", wt.Ahead)),
-			cs.meta.Render(fmt.Sprintf("%d behind", wt.Behind)))
+		return fmt.Sprintf("↑%d ↓%d", wt.Ahead, wt.Behind)
 	case wt.Ahead > 0:
-		parts = append(parts, cs.meta.Render(fmt.Sprintf("%d ahead", wt.Ahead)))
+		return fmt.Sprintf("↑%d", wt.Ahead)
 	case wt.Behind > 0:
-		parts = append(parts, cs.meta.Render(fmt.Sprintf("%d behind", wt.Behind)))
+		return fmt.Sprintf("↓%d", wt.Behind)
+	}
+	return ""
+}
+
+// renderRow draws one worktree as a single row of aligned columns:
+//
+//	▌ feat/parser         ● 3 changed ↑2     12m ago  a1b2c3d
+func (m model) renderRow(idx, width int, c rowColumns) string {
+	wt := m.worktrees[m.filtered[idx]]
+	selected := idx == m.cursor
+	p := newRowPalette(selected)
+
+	// The accent bar marks the selection; the tint behind it carries across
+	// the row so the whole line reads as one.
+	bar := p.fill.Render("  ")
+	if selected {
+		bar = selectedStyle.Background(colRowBg).Render("▌") + p.fill.Render(" ")
 	}
 
-	return strings.Join(parts, cs.meta.Render(" · "))
+	label := truncate(m.rowLabel(wt), c.branch)
+	row := bar + highlightMatch(label, strings.TrimSpace(m.textInput.Value()), p.name, p.nameMatch) +
+		p.fill.Render(strings.Repeat(" ", c.branch-lipgloss.Width(label)))
+
+	stateStyle := p.clean
+	if wt.Dirty > 0 {
+		stateStyle = p.dirty
+	}
+	row += cell(gitStateText(wt), c.state, 1, false, stateStyle, p.fill)
+	row += cell(syncText(wt), c.sync, 1, false, p.meta, p.fill)
+	row += cell(relativeTime(wt.LastCommit), c.age, 2+c.slack, true, p.meta, p.fill)
+	row += cell(wt.Head, c.head, 2, false, p.head, p.fill)
+
+	// Pad to the full width so the tint runs edge to edge. Measuring the row
+	// rather than adding the columns up keeps this right whichever columns
+	// the width shed.
+	if pad := width - lipgloss.Width(row); pad > 0 {
+		row += p.fill.Render(strings.Repeat(" ", pad))
+	}
+	return row
 }
 
 // renderStatusLine is the single row between the list and the footer. It holds

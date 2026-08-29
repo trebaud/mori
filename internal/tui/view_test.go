@@ -37,11 +37,13 @@ func newTestModel(t *testing.T, n, width, height int) model {
 	return m
 }
 
-func TestRenderCardHasFixedHeight(t *testing.T) {
+func TestRenderRowIsOneLine(t *testing.T) {
 	m := newTestModel(t, 4, 80, 30)
+	cols := m.rowColumns(80)
 	for i := range m.filtered {
-		if got := len(m.renderCard(i, 80)); got != cardHeight {
-			t.Errorf("card %d: got %d lines, want %d", i, got, cardHeight)
+		row := m.renderRow(i, 80, cols)
+		if strings.Contains(row, "\n") {
+			t.Errorf("row %d spans more than one line: %q", i, plain(row))
 		}
 	}
 }
@@ -52,7 +54,7 @@ func TestRenderCardsFillsListHeight(t *testing.T) {
 	for _, n := range []int{0, 1, 4, 40} {
 		for _, height := range []int{14, 24, 25, 50} {
 			m := newTestModel(t, n, 80, height)
-			if got := len(m.renderCards(80)); got != m.listHeight() {
+			if got := len(m.renderRows(80)); got != m.listHeight() {
 				t.Errorf("n=%d height=%d: got %d rows, want %d", n, height, got, m.listHeight())
 			}
 		}
@@ -61,34 +63,43 @@ func TestRenderCardsFillsListHeight(t *testing.T) {
 
 func TestRenderCardsShowsScrollHint(t *testing.T) {
 	m := newTestModel(t, 40, 80, 24)
-	out := strings.Join(m.renderCards(80), "\n")
+	out := strings.Join(m.renderRows(80), "\n")
 	if !strings.Contains(out, "more") {
 		t.Errorf("expected a scroll hint when worktrees overflow the viewport:\n%s", out)
 	}
 
 	m.cursor = len(m.filtered) - 1
 	m.adjustScroll()
-	out = strings.Join(m.renderCards(80), "\n")
+	out = strings.Join(m.renderRows(80), "\n")
 	if !strings.Contains(out, "above") {
 		t.Errorf("expected an above hint once scrolled to the end:\n%s", out)
 	}
 }
 
-// Every card row is padded to the same width so the right-hand column (age,
-// HEAD) lines up down the list.
-func TestRenderCardRowsShareWidth(t *testing.T) {
-	for _, width := range []int{60, 80, 120} {
+// Every row is padded to exactly the terminal width, so the selected row's
+// tint runs edge to edge and the columns line up down the list.
+func TestRenderRowsShareWidth(t *testing.T) {
+	for _, width := range []int{44, 60, 80, 120} {
 		m := newTestModel(t, 4, width, 30)
+		cols := m.rowColumns(width)
 		for i := range m.filtered {
-			rows := m.renderCard(i, width)
-			first, second := lipgloss.Width(rows[0]), lipgloss.Width(rows[1])
-			if first != second {
-				t.Errorf("width=%d card=%d: row widths differ (%d vs %d)", width, i, first, second)
-			}
-			if first > width {
-				t.Errorf("width=%d card=%d: row overflows terminal (%d)", width, i, first)
+			if got := lipgloss.Width(m.renderRow(i, width, cols)); got != width {
+				t.Errorf("width=%d row=%d: %d columns, want %d", width, i, got, width)
 			}
 		}
+	}
+}
+
+// A narrow terminal drops columns from the right rather than squeezing the
+// branch name away.
+func TestNarrowRowsShedColumns(t *testing.T) {
+	wide := newTestModel(t, 4, 120, 30).rowColumns(120)
+	if wide.head == 0 || wide.sync == 0 || wide.age == 0 {
+		t.Fatalf("a wide terminal should keep every column: %+v", wide)
+	}
+	narrow := newTestModel(t, 4, minViewWidth, 30).rowColumns(minViewWidth)
+	if narrow.branch < minBranchWidth && narrow.head != 0 {
+		t.Errorf("narrow terminal kept HEAD while starving the branch: %+v", narrow)
 	}
 }
 

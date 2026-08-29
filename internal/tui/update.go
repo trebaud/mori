@@ -157,10 +157,10 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		m.cursor = max(0, len(m.filtered)-1)
 		m.adjustScroll()
 	case "ctrl+d", "pgdown":
-		m.cursor = min(m.cursor+m.visibleCards(), max(0, len(m.filtered)-1))
+		m.cursor = min(m.cursor+m.visibleRows(), max(0, len(m.filtered)-1))
 		m.adjustScroll()
 	case "ctrl+u", "pgup":
-		m.cursor = max(0, m.cursor-m.visibleCards())
+		m.cursor = max(0, m.cursor-m.visibleRows())
 		m.adjustScroll()
 
 	case "enter", "o":

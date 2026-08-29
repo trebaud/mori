@@ -94,6 +94,23 @@ func highlightMatch(s, query string, base, match lipgloss.Style) string {
 	return base.Render(s[:i]) + match.Render(s[i:end]) + base.Render(s[end:])
 }
 
+// cell renders one column of a list row: gap columns of padding, then text
+// truncated to w and padded out to it, aligned right when right is set. A
+// zero width hides the column and its gap with it. The padding comes from
+// fill so a tinted row stays continuous.
+func cell(text string, w, gap int, right bool, st, fill lipgloss.Style) string {
+	if w <= 0 {
+		return ""
+	}
+	t := truncate(text, w)
+	pad := fill.Render(strings.Repeat(" ", max(0, w-lipgloss.Width(t))))
+	out := fill.Render(strings.Repeat(" ", gap))
+	if right {
+		return out + pad + st.Render(t)
+	}
+	return out + st.Render(t) + pad
+}
+
 // --- Key hints ---
 
 // keyHint is one "[k] label" pair in a footer or a card's action row. prio

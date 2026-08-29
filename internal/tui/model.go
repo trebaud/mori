@@ -10,11 +10,11 @@ import (
 	"github.com/trebaud/mori/internal"
 )
 
-// Layout constants. A worktree card is three rendered rows (branch, path,
-// git state) plus one blank row of breathing space.
+// Layout constants. A worktree is one row: branch, git state, sync, age and
+// HEAD in aligned columns.
 const (
-	cardHeight    = 4
-	chromeHeight  = 6 // blank, top bar, blank, status line, footer, trailing
+	rowHeight     = 1
+	chromeHeight  = 6 // blank, top bar, rule, status line, footer, trailing
 	minViewWidth  = 44
 	minViewHeight = 12
 	// maxContentWidth caps how wide the layout grows. Past it the two columns
@@ -139,31 +139,37 @@ func (m model) Init() tea.Cmd {
 
 // --- Layout helpers ---
 
-// listHeight is the number of rows available for worktree cards.
+// listHeight is the number of rows available for the worktree list.
 func (m model) listHeight() int {
 	if m.height <= 0 {
-		return cardHeight * 3
+		return 12
 	}
 	h := m.height - chromeHeight
-	if h < cardHeight {
-		h = cardHeight
+	if h < rowHeight {
+		h = rowHeight
 	}
 	return h
 }
 
-// visibleCards is how many worktree cards fit in the list area.
-func (m model) visibleCards() int {
-	n := m.listHeight() / cardHeight
-	if n < 1 {
+// visibleRows is how many worktrees fit in the list area. When the list
+// overflows, the bottom row goes to the scroll hint instead of a worktree —
+// so the viewport is always exactly listHeight rows and the footer never
+// moves, whether or not there is more to scroll to.
+func (m model) visibleRows() int {
+	h := m.listHeight()
+	if len(m.filtered) > h {
+		h--
+	}
+	if h < 1 {
 		return 1
 	}
-	return n
+	return h
 }
 
 // adjustScroll keeps the cursor inside the viewport and clamps scrollOffset so
 // we never scroll past the last card.
 func (m *model) adjustScroll() {
-	n := m.visibleCards()
+	n := m.visibleRows()
 	if m.cursor < m.scrollOffset {
 		m.scrollOffset = m.cursor
 	}
