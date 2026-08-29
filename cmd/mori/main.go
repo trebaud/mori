@@ -160,9 +160,6 @@ Global:
   help, --help        Show this help message
   version, --version  Show version
 
-Shell integration:
-  mc() { cd "$(mori)" || return; }
-
 TUI keys:
   j/k, arrows   Navigate            n   New worktree
   enter         Pick (prints path)  d   Delete worktree

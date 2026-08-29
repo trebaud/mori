@@ -383,15 +383,12 @@ func (m model) viewHelp(width int) string {
 		}
 	}
 
-	hint := " " + mutedStyle.Render("shell: ") + dimStyle.Render(`mc() { cd "$(mori)" || return; }`)
-
 	return strings.Join([]string{
 		"",
 		m.renderTopBar(width),
 		"",
 		renderFrame(c.String(), w, "keybindings"),
 		"",
-		hint,
 		" " + mutedStyle.Render("[?] close   [q] quit"),
 	}, "\n")
 }
