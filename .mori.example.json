@@ -1,0 +1,7 @@
+{
+  "post_create": [
+    { "name": "Recording the worktree", "cmd": "sleep 1 && pwd > .mori-hook-ran.txt" },
+    { "name": "Installing dependencies", "cmd": "sleep 5" },
+    { "name": "Warming the build cache", "cmd": "sleep 3 && date >> .mori-hook-ran.txt" }
+  ]
+}
