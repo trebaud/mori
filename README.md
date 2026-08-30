@@ -16,8 +16,7 @@ go install github.com/trebaud/mori/v2/cmd/mori@latest
 
 Make sure `$(go env GOPATH)/bin` is on your `$PATH`.
 
-Or build from source with `./scripts/install.sh`, which checks dependencies,
-builds the binary, and installs it to `/usr/local/bin` or `~/.local/bin`.
+Or build from source with `./scripts/install.sh`
 
 ## Usage
 
@@ -30,28 +29,9 @@ mori path feat        # Print the directory for branch "feat"
 mori remove feat      # Remove a worktree (asks before discarding changes)
 ```
 
-Listings cover git's *linked* worktrees. The repository's own working tree —
-the one you're standing in — isn't something to switch to or delete, so it
-never appears.
+## Config
 
-## Where worktrees live
-
-Worktrees are created under `~/.mori/worktrees/<repo>/<branch>`, not inside the
-repository:
-
-```
-~/.mori/
-├── settings.json
-├── archived.json
-└── worktrees/
-    ├── mori/
-    │   ├── feat-parser/
-    │   └── fix-theme/
-    └── other-project/
-        └── feat-parser/
-```
-
-## Configuration
+Worktrees are created under `~/.mori/worktrees/<repo>/<branch>`
 
 Global: `~/.mori/settings.json`. Per-project: `.mori.json` in the repo root
 (replaces global).
@@ -67,9 +47,7 @@ Run commands automatically after creating a worktree:
 }
 ```
 
-Each step runs in the new worktree directory. A failing step prints a warning
-but doesn't block the rest. The worktree is not next to the repo, so use
-absolute paths when copying files in.
+Each step runs in the new worktree directory.
 
 ## Claude Code Skill
 
