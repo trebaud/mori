@@ -8,14 +8,6 @@
 
 A small TUI for managing git worktrees.
 
-## Why
-
-`git worktree` is great and its CLI is not. Mori lists every worktree in a repo
-with the state you actually care about — dirty files, ahead/behind, last commit —
-and lets you create, delete, and jump into them without leaving the list.
-
-That's the whole scope. No agent tracking, no PR status, no session management.
-
 ## Install
 
 ```bash
@@ -37,8 +29,6 @@ mori list --json      # Same, machine-readable
 mori path feat        # Print the directory for branch "feat"
 mori remove feat      # Remove a worktree (asks before discarding changes)
 ```
-
-Press `?` inside the TUI for keybindings.
 
 Listings cover git's *linked* worktrees. The repository's own working tree —
 the one you're standing in — isn't something to switch to or delete, so it
