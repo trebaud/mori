@@ -1,6 +1,6 @@
 # Mori
 
-[![Go](https://img.shields.io/badge/go-1.21%2B-00ADD8?logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 [![Release](https://img.shields.io/github/v/release/trebaud/mori)](https://github.com/trebaud/mori/releases)
 
@@ -14,10 +14,26 @@ A small TUI for managing git worktrees.
 go install github.com/trebaud/mori/v2/cmd/mori@latest
 ```
 
-Make sure `$(go env GOPATH)/bin` is on your `$PATH`.
+The `/v2` is part of the module path, not a typo. Without it Go resolves the
+v1 line and installs v1.5.0. Make sure `$(go env GOPATH)/bin` is on your
+`$PATH`.
+
+Prebuilt binaries for Linux, macOS and Windows are attached to every
+[release](https://github.com/trebaud/mori/releases), each with a `.sha256`
+sibling to check it against:
+
+```bash
+shasum -a 256 -c mori-v2.0.0-linux-amd64.sha256
+```
 
 Or build from source with `./scripts/install.sh`, which checks dependencies,
 builds the binary, and installs it to `/usr/local/bin` or `~/.local/bin`.
+Building needs Go 1.26.1 or newer.
+
+Pick one method and stay with it. `go install` writes to
+`$(go env GOPATH)/bin`, `install.sh` to `/usr/local/bin` or `~/.local/bin`; if
+both are on your `$PATH`, whichever comes first wins and an old copy can
+shadow a new one. `mori version` tells you which one you're actually running.
 
 ## Usage
 
