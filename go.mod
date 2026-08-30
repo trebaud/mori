@@ -1,4 +1,4 @@
-module github.com/trebaud/mori
+module github.com/trebaud/mori/v2
 
 go 1.26.1
 

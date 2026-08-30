@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/trebaud/mori/internal"
+	"github.com/trebaud/mori/v2/internal"
 )
 
 // Path prints the worktree directory for a branch, the non-interactive

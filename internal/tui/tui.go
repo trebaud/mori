@@ -18,8 +18,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/trebaud/mori/internal"
-	"github.com/trebaud/mori/internal/git"
+	"github.com/trebaud/mori/v2/internal"
+	"github.com/trebaud/mori/v2/internal/git"
 )
 
 // Run launches the TUI and returns the path of the worktree the user picked,

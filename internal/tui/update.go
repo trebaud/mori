@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/trebaud/mori/internal"
+	"github.com/trebaud/mori/v2/internal"
 )
 
 // Update is the Elm update function — it takes a message and returns the next

@@ -11,7 +11,7 @@ A small TUI for managing git worktrees.
 ## Install
 
 ```bash
-go install github.com/trebaud/mori/cmd/mori@latest
+go install github.com/trebaud/mori/v2/cmd/mori@latest
 ```
 
 Make sure `$(go env GOPATH)/bin` is on your `$PATH`.

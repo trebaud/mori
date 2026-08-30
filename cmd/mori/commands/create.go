@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/trebaud/mori/internal"
+	"github.com/trebaud/mori/v2/internal"
 )
 
 // CreateOptions configures a worktree creation.

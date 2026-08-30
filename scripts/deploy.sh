@@ -3,7 +3,7 @@ set -euo pipefail
 
 # mori deploy script
 # Warms the Go module proxy for the current latest tag so
-# `go install github.com/trebaud/mori/cmd/mori@latest` picks it up.
+# `go install github.com/trebaud/mori/v2/cmd/mori@latest` picks it up.
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -20,7 +20,7 @@ fail() { printf "${RED}[x]${RESET} %s\n" "$*"; exit 1; }
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-MODULE_PATH="$(go list -m 2>/dev/null || echo github.com/trebaud/mori)"
+MODULE_PATH="$(go list -m 2>/dev/null || echo github.com/trebaud/mori/v2)"
 
 [ -d .git ] || fail "Not a git repository."
 

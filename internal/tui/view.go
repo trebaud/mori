@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/trebaud/mori/internal"
+	"github.com/trebaud/mori/v2/internal"
 )
 
 // View is the Elm view function — model in, string out. The base layer is

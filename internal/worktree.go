@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/trebaud/mori/internal/git"
+	"github.com/trebaud/mori/v2/internal/git"
 )
 
 // Worktree is a single git worktree plus the git state mori displays for it.

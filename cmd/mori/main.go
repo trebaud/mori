@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/trebaud/mori/cmd/mori/commands"
+	"github.com/trebaud/mori/v2/cmd/mori/commands"
 )
 
 // ldflagsVersion can be set at build time via -ldflags "-X main.ldflagsVersion=$(git describe --tags)".

@@ -7,7 +7,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/trebaud/mori/internal"
+	"github.com/trebaud/mori/v2/internal"
 )
 
 // Layout constants. A worktree is one row: branch, git state, sync, age and

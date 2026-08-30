@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/trebaud/mori/internal"
+	"github.com/trebaud/mori/v2/internal"
 )
 
 // Remove deletes the worktree on the given branch. Without --force it asks

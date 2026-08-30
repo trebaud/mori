@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/trebaud/mori/internal"
-	"github.com/trebaud/mori/internal/tui"
+	"github.com/trebaud/mori/v2/internal"
+	"github.com/trebaud/mori/v2/internal/tui"
 )
 
 // Select launches the TUI and prints the picked worktree path on stdout, so
