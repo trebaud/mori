@@ -38,9 +38,12 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
 `utils.go`. The TUI renders to `/dev/tty` so stdout stays clean for the
 selected path.
 
-The list is a viewport of fixed-height cards: `cardHeight` rows per worktree,
-`chromeHeight` rows of surrounding chrome. `renderCards` must always return
-exactly `listHeight()` rows or the footer jumps.
+The list is a viewport of single-line rows: `rowHeight` per worktree,
+`chromeHeight` rows of surrounding chrome. `renderRows` must always return
+exactly `listHeight()` rows or the footer jumps. `renderColumnHeader` draws the
+labels through the same `cell` calls a row uses, so labels stay over the values
+they name; column widths are measured on the labels too, so a label is never
+truncated by the rows beneath it.
 
 **`tests/`** — Integration tests that build the binary and run it against temp
 git repos. Unit tests live next to the code they cover.

@@ -8,7 +8,8 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// relativeTime renders a timestamp as a short "12m ago" style string.
+// relativeTime renders a timestamp as a bare "12m" age. The column is
+// labelled, so every row repeating "ago" only adds width and noise.
 func relativeTime(t time.Time) string {
 	if t.IsZero() {
 		return "—"
@@ -16,15 +17,15 @@ func relativeTime(t time.Time) string {
 	d := time.Since(t)
 	switch {
 	case d < time.Minute:
-		return "just now"
+		return "now"
 	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+		return fmt.Sprintf("%dm", int(d.Minutes()))
 	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
+		return fmt.Sprintf("%dh", int(d.Hours()))
 	case d < 365*24*time.Hour:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	default:
-		return fmt.Sprintf("%dy ago", int(d.Hours()/24/365))
+		return fmt.Sprintf("%dy", int(d.Hours()/24/365))
 	}
 }
 
@@ -68,12 +69,10 @@ func padBetweenFill(left, right string, width int, fill lipgloss.Style) string {
 	return fill.Render(" ") + left + fill.Render(strings.Repeat(" ", gap)) + right + fill.Render(" ")
 }
 
-// rule draws the hairline that separates the header from the list.
-func rule(width int) string {
-	if width < 3 {
-		return ""
-	}
-	return " " + borderStyle.Render(strings.Repeat("─", width-2)) + " "
+// center indents s so it sits in the middle of width columns. The measurement
+// ignores styling, so a colored line centers on the text a reader sees.
+func center(s string, width int) string {
+	return strings.Repeat(" ", max(0, (width-lipgloss.Width(s))/2)) + s
 }
 
 // highlightMatch renders s in base, with the first case-insensitive run of
@@ -120,29 +119,33 @@ type keyHint struct {
 	prio       int
 }
 
+// hintSeparator is the gap between hints. Wider than the space inside a
+// single hint, so a row reads as pairs rather than one run of words.
+const hintSeparator = "   "
+
 // hintsWidth is the rendered width of a hint row, measured on the plain text.
 func hintsWidth(hints []keyHint) int {
 	w := 0
 	for i, h := range hints {
 		if i > 0 {
-			w += 2
+			w += len(hintSeparator)
 		}
-		// "[" + key + "]" + " " + label
-		w += lipgloss.Width(h.key) + lipgloss.Width(h.label) + 4
+		// key + " " + label
+		w += lipgloss.Width(h.key) + lipgloss.Width(h.label) + 1
 	}
 	return w
 }
 
-// renderHints draws a hint row, keys in the foreground and labels muted so the
-// keys are what the eye lands on.
+// renderHints draws a hint row as bare "key label" pairs — the key in the
+// terminal's own foreground, its label muted. Weight and color do the work
+// brackets used to, which keeps the footer from reading as punctuation.
 func renderHints(hints []keyHint) string {
 	var b strings.Builder
 	for i, h := range hints {
 		if i > 0 {
-			b.WriteString("  ")
+			b.WriteString(hintSeparator)
 		}
-		b.WriteString(dimStyle.Render("[") + keyStyle.Render(h.key) + dimStyle.Render("]") +
-			" " + mutedStyle.Render(h.label))
+		b.WriteString(keyStyle.Render(h.key) + " " + mutedStyle.Render(h.label))
 	}
 	return b.String()
 }
@@ -226,7 +229,7 @@ func renderFrame(content string, width int, title string) string {
 		if tail < 1 {
 			tail = 1
 		}
-		top = borderStyle.Render("╭──") + headingStyle.Render(titleText) +
+		top = borderStyle.Render("╭──") + titleStyle.Render(titleText) +
 			borderStyle.Render(strings.Repeat("─", tail)+"╮")
 	}
 

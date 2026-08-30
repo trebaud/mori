@@ -61,7 +61,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitStepCmd(m.creatingChan)
 
 	case spinnerTickMsg:
-		if m.mode == modeCreating {
+		// Anything in flight spins: the create card's steps, and the status
+		// line while a refresh or a removal is running.
+		if m.mode == modeCreating || (m.statusMsg != nil && m.statusMsg.isLoading) {
 			m.animFrame++
 			return m, spinnerTickCmd()
 		}
@@ -203,7 +205,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 
 	case "r":
 		m.statusMsg = loadingStatus("refreshing…")
-		return m, refreshCmd()
+		return m, tea.Batch(refreshCmd(), spinnerTickCmd())
 
 	case "x":
 		if wt := m.selectedWorktree(); wt != nil {
@@ -308,7 +310,7 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 			wt := m.worktrees[m.filtered[m.deleteTarget]]
 			m.statusMsg = loadingStatus("removing " + wt.Label() + "…")
 			// Force: the confirmation already spelled out any uncommitted work.
-			return m, removeWorktreeCmd(wt.Path, true)
+			return m, tea.Batch(removeWorktreeCmd(wt.Path, true), spinnerTickCmd())
 		}
 	case "n", "N", "esc", "ctrl+c":
 		m.mode = modeNormal

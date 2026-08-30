@@ -62,17 +62,28 @@ func (m model) viewTooSmall() string {
 // --- Base layout ---
 
 func (m model) viewList(width int) string {
-	lines := []string{"", m.renderTopBar(width), rule(width)}
+	// A blank line under the brand, then the column labels: the labels are
+	// the only separator the list needs, and they earn their row by naming
+	// what each column of glyphs and numbers means.
+	header := ""
+	if len(m.filtered) > 0 {
+		header = m.renderColumnHeader(m.rowColumns(width))
+	}
+
+	lines := []string{"", m.renderTopBar(width), "", header}
 	lines = append(lines, m.renderRows(width)...)
 	lines = append(lines, m.renderStatusLine(), m.renderFooter(width))
 	return strings.Join(lines, "\n")
 }
 
+// brand is the wordmark. The asterism is three marks in a clearing — a very
+// small forest, which is what "mori" means and what a set of worktrees is.
+const brand = "⁂ mori"
+
 func (m model) renderTopBar(width int) string {
-	const brand = "◆ MORI"
 	// The brand, two spaces, and the line's own margins are fixed overhead.
-	label := truncate(m.repoLabel, max(0, width-len(brand)-4))
-	left := titleStyle.Render(brand) + "  " + mutedStyle.Render(label)
+	label := truncate(m.repoLabel, max(0, width-lipgloss.Width(brand)-4))
+	left := brandStyle.Render(brand) + "  " + mutedStyle.Render(label)
 
 	n := len(m.filtered)
 	summary := fmt.Sprintf("%d worktrees", n)
@@ -94,7 +105,7 @@ func (m model) renderRows(width int) []string {
 	var lines []string
 
 	if len(m.filtered) == 0 {
-		lines = append(lines, m.renderEmpty(height)...)
+		lines = append(lines, m.renderEmpty(width, height)...)
 	} else {
 		cols := m.rowColumns(width)
 		end := min(m.scrollOffset+m.visibleRows(), len(m.filtered))
@@ -102,7 +113,7 @@ func (m model) renderRows(width int) []string {
 			lines = append(lines, m.renderRow(i, width, cols))
 		}
 		if hint := scrollHint(m.scrollOffset, len(m.filtered)-end); hint != "" {
-			lines = append(lines, "  "+dimStyle.Render(hint))
+			lines = append(lines, "  "+columnStyle.Render(hint))
 		}
 	}
 
@@ -119,25 +130,34 @@ func scrollHint(above, below int) string {
 		parts = append(parts, fmt.Sprintf("↑ %d above", above))
 	}
 	if below > 0 {
-		parts = append(parts, fmt.Sprintf("↓ %d more", below))
+		parts = append(parts, fmt.Sprintf("↓ %d below", below))
 	}
 	return strings.Join(parts, " · ")
 }
 
-// renderEmpty draws the empty state a third of the way down the list area,
-// where the eye already is, rather than pinned under the header.
-func (m model) renderEmpty(height int) []string {
-	msg, hint := "no worktrees yet", []keyHint{{key: "n", label: "create one"}}
+// renderEmpty draws the empty state centered across the list area and a third
+// of the way down it, where the eye already is rather than pinned under the
+// header. Nothing to list means nothing else to align to, so this is the one
+// place the layout leaves its columns behind.
+func (m model) renderEmpty(width, height int) []string {
+	mark := brandStyle.Render("⁂")
+	msg, hint := "this clearing is empty", []keyHint{{key: "n", label: "plant a worktree"}}
 	if m.textInput.Value() != "" {
-		msg = "no worktrees match “" + m.textInput.Value() + "”"
+		mark = mutedStyle.Render("∅")
+		msg = "nothing grows under “" + truncate(m.textInput.Value(), max(8, width-24)) + "”"
 		hint = []keyHint{{key: "esc", label: "clear the filter"}}
 	}
 
+	block := []string{mark, "", mutedStyle.Render(msg), "", renderHints(hint)}
+
 	lines := make([]string, 0, height)
-	for i := 0; i < max(0, (height-2)/3); i++ {
+	for i := 0; i < max(0, (height-len(block))/3); i++ {
 		lines = append(lines, "")
 	}
-	return append(lines, "  "+mutedStyle.Render(msg), "", "  "+renderHints(hint))
+	for _, ln := range block {
+		lines = append(lines, center(ln, width))
+	}
+	return lines
 }
 
 // --- Rows ---
@@ -181,12 +201,22 @@ func newRowPalette(selected bool) rowPalette {
 // age, rather than squeezing the branch name down to nothing.
 type rowColumns struct {
 	branch, state, sync, age, head int
-	slack                          int // spare columns, held before the age
+	slack                          int // spare columns, held after the branch
 }
 
 // minBranchWidth is the narrowest a branch column may get before the row
 // starts dropping columns to its right.
 const minBranchWidth = 18
+
+// Column labels. They are measured into the column widths alongside the
+// content, so a label never gets truncated by the rows beneath it.
+const (
+	labelBranch  = "branch"
+	labelChanges = "changes"
+	labelSync    = "sync"
+	labelAge     = "age"
+	labelHead    = "head"
+)
 
 // fixedWidth is what every column except the branch costs, gaps included.
 func (c rowColumns) fixedWidth() int {
@@ -205,12 +235,17 @@ func (c rowColumns) fixedWidth() int {
 // the visible slice, so they stay put while the list scrolls.
 //
 // The branch takes only the width it needs. Whatever is left over is held as
-// slack before the age, which pins the age and HEAD to the right edge — so a
-// wide terminal reads as name-on-the-left, time-on-the-right rather than one
-// column stretched across a void.
+// slack directly after it, which pushes every other column against the right
+// edge as one block — so a wide terminal reads as name on the left, git state
+// on the right, rather than four columns adrift in the middle.
 func (m model) rowColumns(width int) rowColumns {
-	c := rowColumns{}
-	natural := 0
+	c := rowColumns{
+		state: len(labelChanges),
+		sync:  len(labelSync),
+		age:   len(labelAge),
+		head:  len(labelHead),
+	}
+	natural := len(labelBranch)
 	for _, i := range m.filtered {
 		wt := m.worktrees[i]
 		natural = max(natural, lipgloss.Width(m.rowLabel(wt)))
@@ -233,6 +268,19 @@ func (m model) rowColumns(width int) rowColumns {
 	return c
 }
 
+// renderColumnHeader labels the grid. It is built from the same cells as a
+// worktree row — same widths, same gaps, same alignment — so the labels sit
+// exactly over the values they name.
+func (m model) renderColumnHeader(c rowColumns) string {
+	fill := lipgloss.NewStyle()
+	row := cell(labelBranch, c.branch, 2, false, columnStyle, fill)
+	row += cell(labelChanges, c.state, 1+c.slack, true, columnStyle, fill)
+	row += cell(labelSync, c.sync, 1, true, columnStyle, fill)
+	row += cell(labelAge, c.age, 2, true, columnStyle, fill)
+	row += cell(labelHead, c.head, 2, false, columnStyle, fill)
+	return row
+}
+
 // rowLabel is what the branch column shows for a worktree.
 func (m model) rowLabel(wt internal.Worktree) string {
 	if m.archived[wt.Branch] {
@@ -243,11 +291,15 @@ func (m model) rowLabel(wt internal.Worktree) string {
 
 // gitStateText and syncText are the plain forms of the two git columns. The
 // columns are measured on these, then rendered from them.
+//
+// A clean worktree is the common case and the uninteresting one, so it says
+// so with a single dot: the eye should catch the rows carrying work, not read
+// the word "clean" five times on the way down.
 func gitStateText(wt internal.Worktree) string {
 	if wt.Dirty > 0 {
-		return fmt.Sprintf("● %d changed", wt.Dirty)
+		return fmt.Sprintf("● %d", wt.Dirty)
 	}
-	return "○ clean"
+	return "·"
 }
 
 func syncText(wt internal.Worktree) string {
@@ -264,7 +316,7 @@ func syncText(wt internal.Worktree) string {
 
 // renderRow draws one worktree as a single row of aligned columns:
 //
-//	▌ feat/parser         ● 3 changed ↑2     12m ago  a1b2c3d
+//	▎ feat/parser                      ● 3  ↑2   12m  a1b2c3d
 func (m model) renderRow(idx, width int, c rowColumns) string {
 	wt := m.worktrees[m.filtered[idx]]
 	selected := idx == m.cursor
@@ -274,7 +326,7 @@ func (m model) renderRow(idx, width int, c rowColumns) string {
 	// the row so the whole line reads as one.
 	bar := p.fill.Render("  ")
 	if selected {
-		bar = selectedStyle.Background(colRowBg).Render("▌") + p.fill.Render(" ")
+		bar = barStyle.Background(colRowBg).Render("▎") + p.fill.Render(" ")
 	}
 
 	label := truncate(m.rowLabel(wt), c.branch)
@@ -285,9 +337,9 @@ func (m model) renderRow(idx, width int, c rowColumns) string {
 	if wt.Dirty > 0 {
 		stateStyle = p.dirty
 	}
-	row += cell(gitStateText(wt), c.state, 1, false, stateStyle, p.fill)
-	row += cell(syncText(wt), c.sync, 1, false, p.meta, p.fill)
-	row += cell(relativeTime(wt.LastCommit), c.age, 2+c.slack, true, p.meta, p.fill)
+	row += cell(gitStateText(wt), c.state, 1+c.slack, true, stateStyle, p.fill)
+	row += cell(syncText(wt), c.sync, 1, true, p.meta, p.fill)
+	row += cell(relativeTime(wt.LastCommit), c.age, 2, true, p.meta, p.fill)
 	row += cell(wt.Head, c.head, 2, false, p.head, p.fill)
 
 	// Pad to the full width so the tint runs edge to edge. Measuring the row
@@ -310,7 +362,7 @@ func (m model) renderStatusLine() string {
 	}
 	switch {
 	case m.statusMsg.isLoading:
-		return " " + mutedStyle.Render("⋯ "+m.statusMsg.text)
+		return " " + successStyle.Render(m.spinner()) + " " + mutedStyle.Render(m.statusMsg.text)
 	case m.statusMsg.isError:
 		return " " + errorStyle.Render("✗ "+m.statusMsg.text)
 	default:
@@ -385,16 +437,26 @@ func (m model) renderCreateCard(width int) string {
 
 	var c strings.Builder
 	c.WriteString("\n")
-	c.WriteString(" " + titleStyle.Render("›") + "  " + m.textInput.View() + "\n\n")
+	c.WriteString(" " + titleStyle.Render("❯") + "  " + m.textInput.View() + "\n\n")
 	c.WriteString(" " + dimStyle.Render("branches off ") + mutedStyle.Render(m.baseBranch) + "\n")
-	c.WriteString(" " + dimStyle.Render("leave empty for a random name") + "\n\n")
+	// Wrapped, not truncated: on a narrow card this note grows a line rather
+	// than trailing off mid-sentence.
+	for _, ln := range wrapText("leave it empty and mori will name it for you", w-3) {
+		c.WriteString(" " + dimStyle.Render(ln) + "\n")
+	}
+	c.WriteString("\n")
 	c.WriteString(" " + renderHints([]keyHint{{key: "enter", label: "create"}, {key: "esc", label: "cancel"}}) + "\n")
 
 	return renderFrame(c.String(), w, "new worktree")
 }
 
-// spinnerFrames are braille dots used to animate a running step.
+// spinnerFrames are braille dots used to animate anything in flight.
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// spinner is the current frame. Everything that spins spins together.
+func (m model) spinner() string {
+	return spinnerFrames[m.animFrame%len(spinnerFrames)]
+}
 
 func (m model) renderCreatingCard(width int) string {
 	w := cardWidth(width, 88)
@@ -404,7 +466,7 @@ func (m model) renderCreatingCard(width int) string {
 	c.WriteString("\n")
 	c.WriteString(" " + mutedStyle.Render("creating ") + textStyle.Render(m.creatingBranch) + "\n\n")
 
-	spin := spinnerFrames[m.animFrame%len(spinnerFrames)]
+	spin := m.spinner()
 	for _, step := range m.creatingSteps {
 		var glyph string
 		nameStyle := mutedStyle
@@ -418,7 +480,7 @@ func (m model) renderCreatingCard(width int) string {
 			glyph = errorStyle.Render("✗")
 			nameStyle = errorStyle
 		default:
-			glyph = mutedStyle.Render("○")
+			glyph = dimStyle.Render("·")
 		}
 		c.WriteString(" " + glyph + " " + nameStyle.Render(step.name) + "\n")
 		c.WriteString("   " + dimStyle.Render(truncate(step.cmd, cmdW)) + "\n")
@@ -437,7 +499,7 @@ func (m model) renderDeleteCard(width int) string {
 
 	var c strings.Builder
 	c.WriteString("\n")
-	c.WriteString(" " + textStyle.Render("Remove ") + selectedStyle.Render(wt.Label()) + textStyle.Render("?") + "\n")
+	c.WriteString(" " + textStyle.Render("remove ") + selectedStyle.Render(wt.Label()) + textStyle.Render("?") + "\n")
 	c.WriteString(" " + mutedStyle.Render(truncate(wt.DisplayPath, w-4)) + "\n\n")
 
 	if wt.Dirty > 0 {
@@ -501,9 +563,9 @@ func (m model) viewHelp(width int) string {
 		}
 		c.WriteString(" " + headingStyle.Render(section.title) + "\n")
 		for _, kv := range section.keys {
-			key := selectedStyle.Render(kv[0])
-			pad := max(1, 14-lipgloss.Width(key))
-			c.WriteString("  " + key + strings.Repeat(" ", pad) + mutedStyle.Render(kv[1]) + "\n")
+			pad := max(1, 14-lipgloss.Width(kv[0]))
+			c.WriteString("  " + keyStyle.Render(kv[0]) + strings.Repeat(" ", pad) +
+				mutedStyle.Render(kv[1]) + "\n")
 		}
 	}
 

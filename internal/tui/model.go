@@ -14,7 +14,7 @@ import (
 // HEAD in aligned columns.
 const (
 	rowHeight     = 1
-	chromeHeight  = 6 // blank, top bar, rule, status line, footer, trailing
+	chromeHeight  = 7 // blank, top bar, blank, column labels, status, footer, trailing
 	minViewWidth  = 44
 	minViewHeight = 12
 	// maxContentWidth caps how wide the layout grows. Past it the two columns
@@ -199,7 +199,7 @@ func (m *model) syncInputWidth() {
 
 	var avail int
 	if m.mode == modeCreate {
-		// Card interior, less the frame and the "›  " prefix.
+		// Card interior, less the frame and the "❯  " prefix.
 		avail = cardWidth(width, createCardMaxWidth) - 6
 	} else {
 		// Status line, less the "/ " prefix and a trailing column.

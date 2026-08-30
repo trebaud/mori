@@ -24,13 +24,16 @@ var (
 
 var (
 	titleStyle    lipgloss.Style
+	brandStyle    lipgloss.Style
 	textStyle     lipgloss.Style
 	mutedStyle    lipgloss.Style
 	dimStyle      lipgloss.Style
 	headingStyle  lipgloss.Style
+	columnStyle   lipgloss.Style
 	selectedStyle lipgloss.Style
 	keyStyle      lipgloss.Style
 	rowStyle      lipgloss.Style
+	barStyle      lipgloss.Style
 
 	dirtyStyle lipgloss.Style
 	cleanStyle lipgloss.Style
@@ -59,23 +62,33 @@ func ApplyTheme(isDark bool) {
 	colBorder = ld(lipgloss.Color("250"), lipgloss.Color("238"))
 
 	titleStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+	// The wordmark is set in the accent without bold: at this size the color
+	// alone carries it, and bold on a two-glyph mark reads as shouting.
+	brandStyle = lipgloss.NewStyle().Foreground(colAccent)
 	textStyle = lipgloss.NewStyle()
 	mutedStyle = lipgloss.NewStyle().Foreground(colMuted)
 	dimStyle = lipgloss.NewStyle().Faint(true)
 	headingStyle = lipgloss.NewStyle().Foreground(colMuted).Bold(true)
+	// Column labels name the grid without competing with it, so they sit a
+	// step quieter than the muted text underneath them.
+	columnStyle = lipgloss.NewStyle().Foreground(colMuted).Faint(true)
 	selectedStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+	// The rail down the left of the selected row.
+	barStyle = lipgloss.NewStyle().Foreground(colAccent)
 
 	// Key hints read as "key, then what it does": the key sits at the
-	// terminal's own foreground while its label stays muted.
-	keyStyle = lipgloss.NewStyle().Foreground(colText)
+	// terminal's own foreground, bold enough to scan down, while its label
+	// stays muted. No brackets — weight separates them.
+	keyStyle = lipgloss.NewStyle().Foreground(colText).Bold(true)
 	// The tint behind the selected card. It carries no foreground of its
 	// own — every span on a selected row layers this background under its
 	// usual color.
 	rowStyle = lipgloss.NewStyle().Background(colRowBg)
 
-	// A worktree with uncommitted work is the one that needs attention.
+	// A worktree with uncommitted work is the one that needs attention; a
+	// clean one says so as quietly as it can and still be there.
 	dirtyStyle = lipgloss.NewStyle().Foreground(colWarn)
-	cleanStyle = lipgloss.NewStyle().Foreground(colMuted)
+	cleanStyle = lipgloss.NewStyle().Foreground(colMuted).Faint(true)
 
 	errorStyle = lipgloss.NewStyle().Foreground(colDanger)
 	successStyle = lipgloss.NewStyle().Foreground(colSuccess)

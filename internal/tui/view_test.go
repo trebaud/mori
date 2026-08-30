@@ -64,7 +64,7 @@ func TestRenderCardsFillsListHeight(t *testing.T) {
 func TestRenderCardsShowsScrollHint(t *testing.T) {
 	m := newTestModel(t, 40, 80, 24)
 	out := strings.Join(m.renderRows(80), "\n")
-	if !strings.Contains(out, "more") {
+	if !strings.Contains(out, "below") {
 		t.Errorf("expected a scroll hint when worktrees overflow the viewport:\n%s", out)
 	}
 
@@ -103,6 +103,48 @@ func TestNarrowRowsShedColumns(t *testing.T) {
 	}
 }
 
+// The column labels only earn their row if they sit exactly over the values
+// they name, at every width and whichever columns the width has shed.
+func TestColumnHeaderAlignsWithRows(t *testing.T) {
+	for _, width := range []int{44, 60, 80, 120} {
+		m := newTestModel(t, 3, width, 30)
+		c := m.rowColumns(width)
+		header := plain(m.renderColumnHeader(c))
+		row := plain(m.renderRow(0, width, c))
+		wt := m.worktrees[m.filtered[0]]
+
+		// col is where sub starts, in display columns rather than bytes.
+		col := func(t *testing.T, s, sub string) int {
+			t.Helper()
+			i := strings.Index(s, sub)
+			if i < 0 {
+				t.Fatalf("width=%d: %q is missing from %q", width, sub, s)
+			}
+			return lipgloss.Width(s[:i])
+		}
+
+		if strings.Contains(header, "…") {
+			t.Errorf("width=%d: a column label was truncated: %q", width, header)
+		}
+		// branch and head are left-aligned: their left edges line up.
+		if got, want := col(t, header, labelBranch), col(t, row, m.rowLabel(wt)); got != want {
+			t.Errorf("width=%d: branch label at column %d, value at %d", width, got, want)
+		}
+		if c.head > 0 {
+			if got, want := col(t, header, labelHead), col(t, row, wt.Head); got != want {
+				t.Errorf("width=%d: head label at column %d, value at %d", width, got, want)
+			}
+		}
+		// changes is right-aligned: the right edges line up instead.
+		changes := gitStateText(wt)
+		got := col(t, header, labelChanges) + lipgloss.Width(labelChanges)
+		want := col(t, row, changes) + lipgloss.Width(changes)
+		if got != want {
+			t.Errorf("width=%d: changes label ends at column %d, value at %d", width, got, want)
+		}
+	}
+}
+
 func TestViewNeverExceedsTerminalWidth(t *testing.T) {
 	modes := map[string]inputMode{
 		"normal": modeNormal,
@@ -111,14 +153,18 @@ func TestViewNeverExceedsTerminalWidth(t *testing.T) {
 		"delete": modeConfirmDelete,
 	}
 	for name, mode := range modes {
-		for _, width := range []int{50, 80, 120} {
-			m := newTestModel(t, 6, width, 24)
-			m.mode = mode
-			m.textInput.Placeholder = "filter by branch or path…"
-			m.syncInputWidth()
-			for _, line := range strings.Split(m.View().Content, "\n") {
-				if w := lipgloss.Width(line); w > width {
-					t.Errorf("%s width=%d: line of %d columns: %q", name, width, w, line)
+		// n=0 covers the empty state, which centers itself rather than
+		// following the columns.
+		for _, n := range []int{0, 6} {
+			for _, width := range []int{50, 80, 120} {
+				m := newTestModel(t, n, width, 24)
+				m.mode = mode
+				m.textInput.Placeholder = "filter by branch or path…"
+				m.syncInputWidth()
+				for _, line := range strings.Split(m.View().Content, "\n") {
+					if w := lipgloss.Width(line); w > width {
+						t.Errorf("%s n=%d width=%d: line of %d columns: %q", name, n, width, w, line)
+					}
 				}
 			}
 		}
