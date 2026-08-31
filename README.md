@@ -21,7 +21,7 @@ Or build from source with `./scripts/install.sh`
 ## Usage
 
 ```bash
-mori                  # TUI; prints the picked worktree path on exit
+mori                  # TUI; browse worktrees, `y` copies one's path
 mori new feat         # Create a worktree on a new branch "feat"
 mori list             # Table of worktrees
 mori list --json      # Same, machine-readable
