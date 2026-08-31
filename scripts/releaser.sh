@@ -31,7 +31,7 @@ for PLATFORM in "${PLATFORMS[@]}"; do
     echo "  -> $GOOS/$GOARCH"
     env GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 go build \
         -trimpath \
-        -ldflags "-s -w -X main.version=${VERSION}" \
+        -ldflags "-s -w -X main.ldflagsVersion=${VERSION}" \
         -o "${STAGE}/${APP_NAME}" \
         ./cmd/mori
 
