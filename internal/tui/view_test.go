@@ -37,14 +37,48 @@ func newTestModel(t *testing.T, n, width, height int) model {
 	return m
 }
 
-func TestRenderRowIsOneLine(t *testing.T) {
+// A worktree is one line, except the selected one, which adds its path.
+func TestRenderRowHeights(t *testing.T) {
 	m := newTestModel(t, 4, 80, 30)
 	cols := m.rowColumns(80)
 	for i := range m.filtered {
-		row := m.renderRow(i, 80, cols)
-		if strings.Contains(row, "\n") {
-			t.Errorf("row %d spans more than one line: %q", i, plain(row))
+		want := rowHeight
+		if i == m.cursor {
+			want += detailHeight
 		}
+		lines := m.renderRow(i, 80, cols)
+		if len(lines) != want {
+			t.Errorf("row %d: %d lines, want %d", i, len(lines), want)
+		}
+		for _, ln := range lines {
+			if strings.Contains(ln, "\n") {
+				t.Errorf("row %d holds an embedded newline: %q", i, plain(ln))
+			}
+		}
+	}
+}
+
+// The selected worktree shows the full path it is about to hand back, and
+// only the selected one — a path under every row would bury the list.
+func TestSelectedRowShowsPath(t *testing.T) {
+	m := newTestModel(t, 4, 80, 30)
+	m.cursor = 2
+	cols := m.rowColumns(80)
+
+	selected := plain(strings.Join(m.renderRow(2, 80, cols), "\n"))
+	if want := m.worktrees[m.filtered[2]].DisplayPath; !strings.Contains(selected, want) {
+		t.Errorf("selected row is missing its path %q:\n%s", want, selected)
+	}
+	if !strings.HasPrefix(selected, cursorGlyph) {
+		t.Errorf("selected row does not start with the cursor: %q", selected)
+	}
+
+	other := plain(strings.Join(m.renderRow(0, 80, cols), "\n"))
+	if strings.Contains(other, m.worktrees[m.filtered[0]].DisplayPath) {
+		t.Errorf("unselected row spelled out its path: %q", other)
+	}
+	if strings.Contains(other, cursorGlyph) {
+		t.Errorf("unselected row drew a cursor: %q", other)
 	}
 }
 
@@ -76,15 +110,17 @@ func TestRenderCardsShowsScrollHint(t *testing.T) {
 	}
 }
 
-// Every row is padded to exactly the terminal width, so the selected row's
-// tint runs edge to edge and the columns line up down the list.
+// Every line of the list is padded to exactly the terminal width, so the
+// columns line up down the list whatever each row is carrying.
 func TestRenderRowsShareWidth(t *testing.T) {
 	for _, width := range []int{44, 60, 80, 120} {
 		m := newTestModel(t, 4, width, 30)
 		cols := m.rowColumns(width)
 		for i := range m.filtered {
-			if got := lipgloss.Width(m.renderRow(i, width, cols)); got != width {
-				t.Errorf("width=%d row=%d: %d columns, want %d", width, i, got, width)
+			for j, ln := range m.renderRow(i, width, cols) {
+				if got := lipgloss.Width(ln); got != width {
+					t.Errorf("width=%d row=%d line=%d: %d columns, want %d", width, i, j, got, width)
+				}
 			}
 		}
 	}
@@ -110,7 +146,7 @@ func TestColumnHeaderAlignsWithRows(t *testing.T) {
 		m := newTestModel(t, 3, width, 30)
 		c := m.rowColumns(width)
 		header := plain(m.renderColumnHeader(c))
-		row := plain(m.renderRow(0, width, c))
+		row := plain(m.renderRow(0, width, c)[0])
 		wt := m.worktrees[m.filtered[0]]
 
 		// col is where sub starts, in display columns rather than bytes.

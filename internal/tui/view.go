@@ -99,7 +99,9 @@ func (m model) renderTopBar(width int) string {
 }
 
 // renderRows renders the scrolling viewport of worktree rows, padded to a
-// fixed height so the footer never shifts as worktrees come and go.
+// fixed height so the footer never shifts as worktrees come and go. The
+// selected worktree contributes two lines rather than one; visibleRows has
+// already set that line aside.
 func (m model) renderRows(width int) []string {
 	height := m.listHeight()
 	var lines []string
@@ -110,7 +112,7 @@ func (m model) renderRows(width int) []string {
 		cols := m.rowColumns(width)
 		end := min(m.scrollOffset+m.visibleRows(), len(m.filtered))
 		for i := m.scrollOffset; i < end; i++ {
-			lines = append(lines, m.renderRow(i, width, cols))
+			lines = append(lines, m.renderRow(i, width, cols)...)
 		}
 		if hint := scrollHint(m.scrollOffset, len(m.filtered)-end); hint != "" {
 			lines = append(lines, "  "+columnStyle.Render(hint))
@@ -162,13 +164,13 @@ func (m model) renderEmpty(width, height int) []string {
 
 // --- Rows ---
 
-// rowPalette is the style set one row draws with. The selected row lays a
-// faint tint under its full width, and a background only covers what a style
-// actually paints — so every span and every run of padding on the row has to
-// come from this set, or the tint comes out full of holes.
+// rowPalette is the style set one row draws with. Selection is carried by the
+// caret in the gutter and by the branch name taking the accent — the other
+// columns read the same selected or not, so a moving cursor never repaints
+// half the list.
 type rowPalette struct {
-	name, meta, head, dirty, clean, fill lipgloss.Style
-	nameMatch                            lipgloss.Style
+	name, meta, head, dirty, clean lipgloss.Style
+	nameMatch                      lipgloss.Style
 }
 
 func newRowPalette(selected bool) rowPalette {
@@ -178,21 +180,11 @@ func newRowPalette(selected bool) rowPalette {
 		head:  dimStyle,
 		dirty: dirtyStyle,
 		clean: cleanStyle,
-		fill:  lipgloss.NewStyle(),
+	}
+	if selected {
+		p.name = selectedStyle
 	}
 	p.nameMatch = markMatch(p.name)
-	if !selected {
-		return p
-	}
-
-	tint := func(st lipgloss.Style) lipgloss.Style { return st.Background(colRowBg) }
-	p.name = tint(p.name.Bold(true))
-	p.meta = tint(p.meta)
-	p.head = tint(p.head)
-	p.dirty = tint(p.dirty)
-	p.clean = tint(p.clean)
-	p.nameMatch = tint(markMatch(p.name))
-	p.fill = rowStyle
 	return p
 }
 
@@ -272,12 +264,11 @@ func (m model) rowColumns(width int) rowColumns {
 // worktree row — same widths, same gaps, same alignment — so the labels sit
 // exactly over the values they name.
 func (m model) renderColumnHeader(c rowColumns) string {
-	fill := lipgloss.NewStyle()
-	row := cell(labelBranch, c.branch, 2, false, columnStyle, fill)
-	row += cell(labelChanges, c.state, 1+c.slack, true, columnStyle, fill)
-	row += cell(labelSync, c.sync, 1, true, columnStyle, fill)
-	row += cell(labelAge, c.age, 2, true, columnStyle, fill)
-	row += cell(labelHead, c.head, 2, false, columnStyle, fill)
+	row := cell(labelBranch, c.branch, gutterWidth, false, columnStyle)
+	row += cell(labelChanges, c.state, 1+c.slack, true, columnStyle)
+	row += cell(labelSync, c.sync, 1, true, columnStyle)
+	row += cell(labelAge, c.age, 2, true, columnStyle)
+	row += cell(labelHead, c.head, 2, false, columnStyle)
 	return row
 }
 
@@ -314,41 +305,50 @@ func syncText(wt internal.Worktree) string {
 	return ""
 }
 
-// renderRow draws one worktree as a single row of aligned columns:
+// cursorGlyph marks the selected row, and gutterWidth is the column it and
+// the header's leading gap both reserve for it.
+const (
+	cursorGlyph = ">"
+	gutterWidth = 2
+)
+
+// renderRow draws one worktree as a row of aligned columns. The selected one
+// adds a second line under its name carrying the full path — the thing enter
+// is about to hand back — set light enough to read as a caption:
 //
-//	▎ feat/parser                      ● 3  ↑2   12m  a1b2c3d
-func (m model) renderRow(idx, width int, c rowColumns) string {
+//	> feat/parser                      ● 3  ↑2   12m  a1b2c3d
+//	  ~/.mori/worktrees/mori/feat/parser
+func (m model) renderRow(idx, width int, c rowColumns) []string {
 	wt := m.worktrees[m.filtered[idx]]
 	selected := idx == m.cursor
 	p := newRowPalette(selected)
 
-	// The accent bar marks the selection; the tint behind it carries across
-	// the row so the whole line reads as one.
-	bar := p.fill.Render("  ")
+	gutter := strings.Repeat(" ", gutterWidth)
 	if selected {
-		bar = barStyle.Background(colRowBg).Render("▎") + p.fill.Render(" ")
+		gutter = cursorStyle.Render(cursorGlyph) + strings.Repeat(" ", gutterWidth-1)
 	}
 
 	label := truncate(m.rowLabel(wt), c.branch)
-	row := bar + highlightMatch(label, strings.TrimSpace(m.textInput.Value()), p.name, p.nameMatch) +
-		p.fill.Render(strings.Repeat(" ", c.branch-lipgloss.Width(label)))
+	row := gutter + highlightMatch(label, strings.TrimSpace(m.textInput.Value()), p.name, p.nameMatch) +
+		strings.Repeat(" ", c.branch-lipgloss.Width(label))
 
 	stateStyle := p.clean
 	if wt.Dirty > 0 {
 		stateStyle = p.dirty
 	}
-	row += cell(gitStateText(wt), c.state, 1+c.slack, true, stateStyle, p.fill)
-	row += cell(syncText(wt), c.sync, 1, true, p.meta, p.fill)
-	row += cell(relativeTime(wt.Age()), c.age, 2, true, p.meta, p.fill)
-	row += cell(wt.Head, c.head, 2, false, p.head, p.fill)
+	row += cell(gitStateText(wt), c.state, 1+c.slack, true, stateStyle)
+	row += cell(syncText(wt), c.sync, 1, true, p.meta)
+	row += cell(relativeTime(wt.Age()), c.age, 2, true, p.meta)
+	row += cell(wt.Head, c.head, 2, false, p.head)
 
-	// Pad to the full width so the tint runs edge to edge. Measuring the row
-	// rather than adding the columns up keeps this right whichever columns
-	// the width shed.
-	if pad := width - lipgloss.Width(row); pad > 0 {
-		row += p.fill.Render(strings.Repeat(" ", pad))
+	lines := []string{padRight(row, width)}
+	if selected {
+		// Indented to the branch column, so the path hangs off the name it
+		// belongs to rather than starting a column of its own.
+		path := truncate(wt.DisplayPath, max(0, width-gutterWidth-1))
+		lines = append(lines, padRight(strings.Repeat(" ", gutterWidth)+pathStyle.Render(path), width))
 	}
-	return row
+	return lines
 }
 
 // renderStatusLine is the single row between the list and the footer. It holds

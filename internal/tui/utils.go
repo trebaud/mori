@@ -50,13 +50,6 @@ func truncate(s string, w int) string {
 // the two cannot both fit, right is dropped — it always carries the secondary
 // information. Callers must pass a left that fits on its own.
 func padBetween(left, right string, width int) string {
-	return padBetweenFill(left, right, width, lipgloss.NewStyle())
-}
-
-// padBetweenFill is padBetween with the margins and the gap drawn in fill.
-// A tinted row has to paint its own whitespace, or the background shows
-// through as a gap between the two columns.
-func padBetweenFill(left, right string, width int, fill lipgloss.Style) string {
 	inner := width - 2
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	if rw > 0 && lw+rw+1 > inner {
@@ -66,7 +59,16 @@ func padBetweenFill(left, right string, width int, fill lipgloss.Style) string {
 	if gap < 1 {
 		gap = 1
 	}
-	return fill.Render(" ") + left + fill.Render(strings.Repeat(" ", gap)) + right + fill.Render(" ")
+	return " " + left + strings.Repeat(" ", gap) + right + " "
+}
+
+// padRight pads s out to width display columns, so every line of the list is
+// the same length whatever columns it ended up carrying.
+func padRight(s string, width int) string {
+	if pad := width - lipgloss.Width(s); pad > 0 {
+		return s + strings.Repeat(" ", pad)
+	}
+	return s
 }
 
 // center indents s so it sits in the middle of width columns. The measurement
@@ -95,15 +97,14 @@ func highlightMatch(s, query string, base, match lipgloss.Style) string {
 
 // cell renders one column of a list row: gap columns of padding, then text
 // truncated to w and padded out to it, aligned right when right is set. A
-// zero width hides the column and its gap with it. The padding comes from
-// fill so a tinted row stays continuous.
-func cell(text string, w, gap int, right bool, st, fill lipgloss.Style) string {
+// zero width hides the column and its gap with it.
+func cell(text string, w, gap int, right bool, st lipgloss.Style) string {
 	if w <= 0 {
 		return ""
 	}
 	t := truncate(text, w)
-	pad := fill.Render(strings.Repeat(" ", max(0, w-lipgloss.Width(t))))
-	out := fill.Render(strings.Repeat(" ", gap))
+	pad := strings.Repeat(" ", max(0, w-lipgloss.Width(t)))
+	out := strings.Repeat(" ", gap)
 	if right {
 		return out + pad + st.Render(t)
 	}

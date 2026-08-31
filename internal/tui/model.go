@@ -10,10 +10,12 @@ import (
 	"github.com/trebaud/mori/v2/internal"
 )
 
-// Layout constants. A worktree is one row: branch, git state, sync, age and
-// HEAD in aligned columns.
+// Layout constants. A worktree is one row — branch, git state, sync, age and
+// HEAD in aligned columns — and the selected one spends a second row on its
+// full path.
 const (
 	rowHeight     = 1
+	detailHeight  = 1 // the path line under the selected worktree
 	chromeHeight  = 7 // blank, top bar, blank, column labels, status, footer, trailing
 	minViewWidth  = 44
 	minViewHeight = 12
@@ -151,12 +153,16 @@ func (m model) listHeight() int {
 	return h
 }
 
-// visibleRows is how many worktrees fit in the list area. When the list
-// overflows, the bottom row goes to the scroll hint instead of a worktree —
-// so the viewport is always exactly listHeight rows and the footer never
-// moves, whether or not there is more to scroll to.
+// visibleRows is how many worktrees fit in the list area. One line is always
+// held back for the selected worktree's path, and when the list overflows the
+// bottom row goes to the scroll hint instead of a worktree — so the viewport
+// is always exactly listHeight lines and the footer never moves, wherever the
+// cursor sits and whether or not there is more to scroll to.
 func (m model) visibleRows() int {
 	h := m.listHeight()
+	if len(m.filtered) > 0 {
+		h -= detailHeight
+	}
 	if len(m.filtered) > h {
 		h--
 	}

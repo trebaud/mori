@@ -8,8 +8,9 @@ import (
 )
 
 // Palette — semantic colors only. We default to ANSI 16 indices so the user's
-// terminal theme controls the actual appearance. Layered backgrounds and
-// borders get explicit hex values chosen per light/dark detection in ApplyTheme.
+// terminal theme controls the actual appearance. Nothing in the list paints a
+// background; only the border gets an explicit value, chosen per light/dark
+// detection in ApplyTheme.
 var (
 	colAccent  color.Color = lipgloss.Color("5") // magenta
 	colSuccess color.Color = lipgloss.Color("2") // green
@@ -18,7 +19,6 @@ var (
 
 	colText   color.Color = lipgloss.NoColor{} // terminal default foreground
 	colMuted  color.Color = lipgloss.ANSIColor(8)
-	colRowBg  color.Color = lipgloss.Color("237")
 	colBorder color.Color = lipgloss.ANSIColor(8)
 )
 
@@ -32,8 +32,8 @@ var (
 	columnStyle   lipgloss.Style
 	selectedStyle lipgloss.Style
 	keyStyle      lipgloss.Style
-	rowStyle      lipgloss.Style
-	barStyle      lipgloss.Style
+	cursorStyle   lipgloss.Style
+	pathStyle     lipgloss.Style
 
 	dirtyStyle lipgloss.Style
 	cleanStyle lipgloss.Style
@@ -55,10 +55,6 @@ func init() {
 func ApplyTheme(isDark bool) {
 	ld := lipgloss.LightDark(isDark)
 
-	// 239 (dark) sits ~5 steps above common terminal backgrounds so the
-	// selection reads even on themes that tint bg around 234. 254 (light)
-	// is the symmetric near-bg gray for light terminals.
-	colRowBg = ld(lipgloss.Color("254"), lipgloss.Color("239"))
 	colBorder = ld(lipgloss.Color("250"), lipgloss.Color("238"))
 
 	titleStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
@@ -73,17 +69,18 @@ func ApplyTheme(isDark bool) {
 	// step quieter than the muted text underneath them.
 	columnStyle = lipgloss.NewStyle().Foreground(colMuted).Faint(true)
 	selectedStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
-	// The rail down the left of the selected row.
-	barStyle = lipgloss.NewStyle().Foreground(colAccent)
+	// The caret in the left gutter is the entire selection marker. A tint
+	// behind the row would fight whatever the user's terminal theme already
+	// paints there; one glyph and a colored name cannot.
+	cursorStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+	// The selected worktree's full path, set under its name. It is a caption
+	// to the row, not another column, so it sits lighter than the row above.
+	pathStyle = lipgloss.NewStyle().Foreground(colMuted).Faint(true)
 
 	// Key hints read as "key, then what it does": the key sits at the
 	// terminal's own foreground, bold enough to scan down, while its label
 	// stays muted. No brackets — weight separates them.
 	keyStyle = lipgloss.NewStyle().Foreground(colText).Bold(true)
-	// The tint behind the selected card. It carries no foreground of its
-	// own — every span on a selected row layers this background under its
-	// usual color.
-	rowStyle = lipgloss.NewStyle().Background(colRowBg)
 
 	// A worktree with uncommitted work is the one that needs attention; a
 	// clean one says so as quietly as it can and still be there.

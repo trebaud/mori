@@ -39,11 +39,15 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
 selected path.
 
 The list is a viewport of single-line rows: `rowHeight` per worktree,
-`chromeHeight` rows of surrounding chrome. `renderRows` must always return
-exactly `listHeight()` rows or the footer jumps. `renderColumnHeader` draws the
-labels through the same `cell` calls a row uses, so labels stay over the values
-they name; column widths are measured on the labels too, so a label is never
-truncated by the rows beneath it.
+`detailHeight` more for the selected one (which shows its full path under its
+name), and `chromeHeight` rows of surrounding chrome. `renderRows` must always
+return exactly `listHeight()` rows or the footer jumps, so `visibleRows()`
+holds the detail line back. Selection is a `>` caret in the gutter plus the
+accent on the branch name — nothing in the list paints a background.
+
+`renderColumnHeader` draws the labels through the same `cell` calls a row
+uses, so labels stay over the values they name; column widths are measured on
+the labels too, so a label is never truncated by the rows beneath it.
 
 **`tests/`** — Integration tests that build the binary and run it against temp
 git repos. Unit tests live next to the code they cover.
