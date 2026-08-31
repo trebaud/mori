@@ -24,8 +24,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.statusMsg != nil && time.Now().After(m.statusMsg.expires) {
 			m.statusMsg = nil
 		}
-		// Don't refresh under an open overlay: create, creating, and the
-		// delete confirmation all hold indices into the current list.
+		// Don't refresh under an open overlay: create, creating, the delete
+		// confirmation and the detail pane all read the current list, and a
+		// reordered list under them would retarget the keys they offer.
 		if m.mode == modeNormal || m.mode == modeSearch {
 			return m, tea.Batch(tickCmd(), refreshCmd())
 		}
@@ -36,7 +37,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.worktrees = msg.worktrees
 			m.applyFilter()
 		}
+		if m.sweepBranch == "" {
+			return m, nil
+		}
+		// A sweep is clocked from the refresh that first carries its row, not
+		// from the create that asked for one: querying git takes long enough
+		// that a sweep started earlier would be half spent before the row it
+		// highlights existed. The caret follows it in.
+		switch found := m.focusBranch(m.sweepBranch); {
+		case found && m.sweepFrame == 0:
+			return m, sweepTickCmd()
+		case !found:
+			// Filtered out, or gone again. Nothing to highlight.
+			m.sweepBranch = ""
+		}
 		return m, nil
+
+	case sweepTickMsg:
+		if m.sweepBranch == "" {
+			return m, nil
+		}
+		m.sweepFrame++
+		if m.sweepFrame > sweepFrames {
+			m.sweepBranch = ""
+			m.sweepFrame = 0
+			return m, nil
+		}
+		return m, sweepTickCmd()
 
 	case stepStartedMsg:
 		for i := range m.creatingSteps {
@@ -63,7 +90,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinnerTickMsg:
 		// Anything in flight spins: the create card's steps, and the status
 		// line while a refresh or a removal is running.
-		if m.mode == modeCreating || (m.statusMsg != nil && m.statusMsg.isLoading) {
+		if m.mode == modeCreating || m.detailLoading || (m.statusMsg != nil && m.statusMsg.isLoading) {
 			m.animFrame++
 			return m, spinnerTickCmd()
 		}
@@ -84,7 +111,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			m.statusMsg = infoStatus("created " + branch)
 		}
+		m.sweepBranch = branch
+		m.sweepFrame = 0
 		return m, refreshCmd()
+
+	case detailLoadedMsg:
+		// Late arrivals for a pane that has since closed or moved on are dropped.
+		if m.mode != modeDetail || msg.branch != m.detailBranch {
+			return m, nil
+		}
+		m.detailLoading = false
+		m.detailCommits = msg.commits
+		m.detailErr = msg.err
+		return m, nil
 
 	case worktreeRemovedMsg:
 		if msg.err != nil {
@@ -118,6 +157,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modeConfirmDelete:
 		return m.handleDeleteKey(key)
+	case modeDetail:
+		return m.handleDetailKey(key)
 	default:
 		return m.handleNormalKey(key)
 	}
@@ -165,11 +206,14 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		m.cursor = max(0, m.cursor-m.visibleRows())
 		m.adjustScroll()
 
-	case "enter", "o":
+	case "i", "tab":
 		if wt := m.selectedWorktree(); wt != nil {
-			m.selected = m.filtered[m.cursor]
-			// Set the clipboard before quitting so the copy actually lands.
-			return m, tea.Sequence(tea.SetClipboard(wt.Path), tea.Quit)
+			m.mode = modeDetail
+			m.detailBranch = wt.Label()
+			m.detailCommits = nil
+			m.detailErr = nil
+			m.detailLoading = true
+			return m, tea.Batch(loadDetailCmd(wt.Label(), wt.Path), spinnerTickCmd())
 		}
 
 	case "y":
@@ -304,7 +348,7 @@ func (m model) handleCreateKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 
 func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
-	case "y", "Y", "enter":
+	case "y", "Y":
 		m.mode = modeNormal
 		if m.deleteTarget < len(m.filtered) {
 			wt := m.worktrees[m.filtered[m.deleteTarget]]
@@ -314,6 +358,28 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "n", "N", "esc", "ctrl+c":
 		m.mode = modeNormal
+	}
+	return m, nil
+}
+
+// handleDetailKey drives the detail pane. It is a read-only view, so it
+// carries only the one action the list would have offered on the same row —
+// yank its path — plus a way out.
+func (m model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "i", "tab", "q":
+		m.mode = modeNormal
+		m.detailBranch = ""
+		m.detailCommits = nil
+		m.detailErr = nil
+		m.detailLoading = false
+	case "y":
+		if wt := m.selectedWorktree(); wt != nil {
+			m.statusMsg = infoStatus("path yanked to clipboard")
+			return m, tea.SetClipboard(wt.Path)
+		}
 	}
 	return m, nil
 }

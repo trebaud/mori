@@ -184,3 +184,39 @@ func Created(path string) time.Time {
 	}
 	return info.ModTime()
 }
+
+// Commit is one entry of a worktree's history.
+type Commit struct {
+	SHA     string
+	Subject string
+	When    time.Time
+}
+
+// RecentCommits returns the newest n commits reachable from HEAD in the
+// worktree at path. A repository with no commits yields no commits and no
+// error — an empty history is a state to display, not a failure.
+func RecentCommits(path string, n int) ([]Commit, error) {
+	// Unit separators, not spaces: a subject may hold anything a person typed.
+	out, err := exec.Command("git", "-C", path, "log", "-n", strconv.Itoa(n),
+		"--format=%h%x1f%s%x1f%ct").Output()
+	if err != nil {
+		if ok, _ := HasCommits(path); !ok {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading history: %w", err)
+	}
+
+	var commits []Commit
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		fields := strings.Split(line, "\x1f")
+		if len(fields) != 3 {
+			continue
+		}
+		c := Commit{SHA: fields[0], Subject: fields[1]}
+		if secs, err := strconv.ParseInt(fields[2], 10, 64); err == nil {
+			c.When = time.Unix(secs, 0)
+		}
+		commits = append(commits, c)
+	}
+	return commits, nil
+}

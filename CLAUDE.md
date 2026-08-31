@@ -45,6 +45,20 @@ return exactly `listHeight()` rows or the footer jumps, so `visibleRows()`
 holds the detail line back. Selection is a `>` caret in the gutter plus the
 accent on the branch name — nothing in the list paints a background.
 
+After a create, the caret moves to the new worktree and an underline sweeps
+once across its name. The sweep is clocked from the `refreshedMsg` that first
+carries the row, not from the create that asked for one: `ListLinked` shells
+out to git, and a sweep started earlier would be half spent before there was
+anything to point at.
+
+`i` (or `tab`) floats a detail pane over the list: the full path, the git
+state spelled out, and the tail of `git log` for that branch. It is the one
+overlay whose content outgrows a short terminal, so every line carries a drop
+tier and `fitDetailLines` sheds whole tiers — padding, then the fields the row
+already showed, then history oldest-first — until the card fits. The
+compositor clips anything past the bottom, border included, so the pane must
+size itself rather than trust the terminal.
+
 `renderColumnHeader` draws the labels through the same `cell` calls a row
 uses, so labels stay over the values they name; column widths are measured on
 the labels too, so a label is never truncated by the rows beneath it.

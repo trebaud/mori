@@ -43,6 +43,8 @@ func (m model) View() tea.View {
 		out = overlay(base, m.renderCreatingCard(width), width)
 	case modeConfirmDelete:
 		out = overlay(base, m.renderDeleteCard(width), width)
+	case modeDetail:
+		out = overlay(base, m.renderDetailCard(width), width)
 	}
 
 	v := tea.NewView(out)
@@ -329,8 +331,11 @@ func (m model) renderRow(idx, width int, c rowColumns) []string {
 	}
 
 	label := truncate(m.rowLabel(wt), c.branch)
-	row := gutter + highlightMatch(label, strings.TrimSpace(m.textInput.Value()), p.name, p.nameMatch) +
-		strings.Repeat(" ", c.branch-lipgloss.Width(label))
+	name := highlightMatch(label, strings.TrimSpace(m.textInput.Value()), p.name, p.nameMatch)
+	if m.sweepBranch != "" && wt.Branch == m.sweepBranch {
+		name = renderSweep(label, m.sweepFrame, p.name)
+	}
+	row := gutter + name + strings.Repeat(" ", c.branch-lipgloss.Width(label))
 
 	stateStyle := p.clean
 	if wt.Dirty > 0 {
@@ -349,6 +354,25 @@ func (m model) renderRow(idx, width int, c rowColumns) []string {
 		lines = append(lines, padRight(strings.Repeat(" ", gutterWidth)+pathStyle.Render(path), width))
 	}
 	return lines
+}
+
+// renderSweep draws the one-pass highlight over a freshly created worktree's
+// name: a window of sweepWindow columns, lit in the match style, travelling
+// from just before the name to just past it over sweepFrames steps. The step
+// is derived from the name's length rather than fixed, so a long branch and a
+// short one take the same moment to settle.
+func renderSweep(label string, frame int, base lipgloss.Style) string {
+	runes := []rune(label)
+	span := len(runes) + sweepWindow
+	start := frame*span/sweepFrames - sweepWindow
+
+	lo, hi := max(0, start), min(len(runes), start+sweepWindow)
+	if lo >= hi {
+		return base.Render(label)
+	}
+	return base.Render(string(runes[:lo])) +
+		markMatch(base).Render(string(runes[lo:hi])) +
+		base.Render(string(runes[hi:]))
 }
 
 // renderStatusLine is the single row between the list and the footer. It holds
@@ -376,11 +400,12 @@ func (m model) renderStatusLine() string {
 func (m model) footerHints() []keyHint {
 	hints := []keyHint{}
 	if len(m.filtered) > 0 {
-		hints = append(hints, keyHint{key: "enter", label: "cd"})
+		hints = append(hints, keyHint{key: "y", label: "yank path"})
 	}
 	hints = append(hints, keyHint{key: "n", label: "new"})
 	if len(m.filtered) > 0 {
 		hints = append(hints, keyHint{key: "d", label: "delete", prio: 1})
+		hints = append(hints, keyHint{key: "i", label: "details", prio: 2})
 		if wt := m.selectedWorktree(); wt != nil && m.archived[wt.Branch] {
 			hints = append(hints, keyHint{key: "x", label: "unarchive", prio: 3})
 		}
@@ -402,7 +427,9 @@ func (m model) renderFooter(width int) string {
 		}))
 	}
 
-	left := renderHints(fitHints(width-2, m.footerHints()))
+	// padBetween keeps a one-column margin each side and a one-column gap
+	// before whatever sits on the right, so the hint row gets width-3.
+	left := renderHints(fitHints(width-3, m.footerHints()))
 
 	var indicators []string
 	if m.sortMode != internal.SortDefault {
@@ -524,6 +551,194 @@ func (m model) renderDeleteCard(width int) string {
 	return renderFrame(c.String(), w, "delete worktree")
 }
 
+// detailCardMaxWidth caps the detail pane. Wider than the other cards: it
+// carries commit subjects, which are sentences rather than labels.
+const detailCardMaxWidth = 76
+
+// A detail pane holds more than a short terminal has rows for, and the
+// compositor clips whatever hangs past the bottom — including the border. So
+// every line carries a drop tier and the pane sheds lines until it fits:
+// whitespace first, then the fields the row it floats over already showed,
+// then history from the oldest commit up. The heading goes last of the
+// history, so a pane never labels an empty section.
+const (
+	dropNever   = 0
+	dropHeading = 1
+	// dropCommit is offset by the commit's index, so the oldest goes first.
+	// detailCommitLimit keeps that ladder clear of dropField above it.
+	dropCommit  = 2
+	dropField   = 20
+	dropPadding = 30
+)
+
+// detailLine is one rendered line of the pane plus its drop tier.
+type detailLine struct {
+	text string
+	drop int
+}
+
+// renderDetailCard describes the selected worktree in full: the path enter
+// would hand back, the git state the row only had glyphs for, and the tail of
+// its history — enough to tell two similar branches apart without leaving
+// mori to run git log.
+func (m model) renderDetailCard(width int) string {
+	w := cardWidth(width, detailCardMaxWidth)
+	wt := m.selectedWorktree()
+	if wt == nil {
+		return renderFrame("\n "+mutedStyle.Render("nothing selected")+"\n", w, "worktree")
+	}
+	innerW := w - 3 // the frame, plus the one-column left margin every line takes
+
+	lines := []detailLine{
+		{"", dropPadding},
+		{" " + selectedStyle.Render(truncate(wt.Label(), innerW)), dropNever},
+		{" " + pathStyle.Render(truncate(wt.DisplayPath, innerW)), dropNever},
+		{"", dropPadding},
+	}
+	for _, f := range m.detailFields(*wt) {
+		lines = append(lines, detailLine{
+			" " + mutedStyle.Render(f.label) + strings.Repeat(" ", max(1, detailLabelWidth-len(f.label))) +
+				textStyle.Render(truncate(f.value, innerW-detailLabelWidth)), f.drop,
+		})
+	}
+
+	lines = append(lines, detailLine{"", dropPadding})
+	lines = append(lines, m.detailHistoryLines(innerW)...)
+	lines = append(lines, detailLine{"", dropPadding})
+	lines = append(lines, detailLine{" " + renderHints([]keyHint{
+		{key: "y", label: "yank path"}, {key: "esc", label: "close"},
+	}), dropNever})
+	lines = append(lines, detailLine{"", dropPadding})
+
+	// Two of the budget go to the border rows, one more keeps the card off the
+	// very edge of the terminal it floats over.
+	budget := 21
+	if m.height > 0 {
+		budget = m.height - 3
+	}
+	return renderFrame(strings.Join(fitDetailLines(lines, budget), "\n"), w, "worktree")
+}
+
+// fitDetailLines drops whole tiers, highest first, until the pane fits the
+// rows it has — the same shape as fitHints, one axis over.
+func fitDetailLines(lines []detailLine, budget int) []string {
+	maxDrop := 0
+	for _, ln := range lines {
+		maxDrop = max(maxDrop, ln.drop)
+	}
+	for cap := maxDrop; ; cap-- {
+		kept := make([]string, 0, len(lines))
+		for _, ln := range lines {
+			if ln.drop <= cap {
+				kept = append(kept, ln.text)
+			}
+		}
+		if len(kept) <= budget || cap == 0 {
+			return kept
+		}
+	}
+}
+
+// detailLabelWidth is the label column of the field block.
+const detailLabelWidth = 9
+
+// detailField is one label/value pair of the pane's field block.
+type detailField struct {
+	label, value string
+	drop         int
+}
+
+// detailFields spells out the facts the row's columns carry as glyphs. head,
+// changes and sync are why the pane was opened; the timestamps below them are
+// context, and go first when the terminal is short.
+func (m model) detailFields(wt internal.Worktree) []detailField {
+	head := wt.Head
+	if head == "" {
+		head = "—"
+	}
+	if wt.Detached {
+		head += "  (detached)"
+	}
+
+	changes := "clean"
+	if wt.Dirty > 0 {
+		noun := "files"
+		if wt.Dirty == 1 {
+			noun = "file"
+		}
+		changes = fmt.Sprintf("%d uncommitted %s", wt.Dirty, noun)
+	}
+
+	sync := "in sync with " + m.baseBranch
+	switch {
+	case wt.Ahead > 0 && wt.Behind > 0:
+		sync = fmt.Sprintf("%d ahead, %d behind %s", wt.Ahead, wt.Behind, m.baseBranch)
+	case wt.Ahead > 0:
+		sync = fmt.Sprintf("%d ahead of %s", wt.Ahead, m.baseBranch)
+	case wt.Behind > 0:
+		sync = fmt.Sprintf("%d behind %s", wt.Behind, m.baseBranch)
+	}
+
+	fields := []detailField{
+		{labelHead, head, dropNever},
+		{labelChanges, changes, dropNever},
+		{labelSync, sync, dropNever},
+		{"created", since(wt.Created), dropField},
+		{"commit", since(wt.LastCommit), dropField},
+	}
+	if m.archived[wt.Branch] {
+		fields = append(fields, detailField{"state", "archived", dropField})
+	}
+	return fields
+}
+
+// since spells a timestamp out for the detail pane, where there is room for
+// the word the age column drops.
+func since(t time.Time) string {
+	if t.IsZero() {
+		return "unknown"
+	}
+	return relativeTime(t) + " ago"
+}
+
+// detailHistoryLines is the tail of the branch's log, one commit per line:
+// sha, age, subject. While the log is in flight — or when there is none — the
+// section is a single line in place of the heading, so the pane never labels
+// a section it has nothing to put in.
+func (m model) detailHistoryLines(innerW int) []detailLine {
+	switch {
+	case m.detailLoading:
+		return []detailLine{{" " + successStyle.Render(m.spinner()) + " " +
+			mutedStyle.Render("reading history…"), dropHeading}}
+	case m.detailErr != nil:
+		return []detailLine{{" " + errorStyle.Render(truncate("✗ "+m.detailErr.Error(), innerW)), dropHeading}}
+	case len(m.detailCommits) == 0:
+		return []detailLine{{" " + mutedStyle.Render("no commits yet"), dropHeading}}
+	}
+
+	ageW := 3
+	for _, cm := range m.detailCommits {
+		ageW = max(ageW, lipgloss.Width(relativeTime(cm.When)))
+	}
+	// sha, two gaps, the age column, and the left margin.
+	subjectW := max(4, innerW-shaWidth-4-ageW)
+
+	lines := []detailLine{{" " + columnStyle.Render("history"), dropHeading}}
+	for i, cm := range m.detailCommits {
+		age := relativeTime(cm.When)
+		lines = append(lines, detailLine{
+			" " + dimStyle.Render(cm.SHA) +
+				"  " + mutedStyle.Render(age) + strings.Repeat(" ", ageW-lipgloss.Width(age)) +
+				"  " + textStyle.Render(truncate(cm.Subject, subjectW)),
+			dropCommit + i,
+		})
+	}
+	return lines
+}
+
+// shaWidth is the width of an abbreviated sha as git prints it.
+const shaWidth = 7
+
 // --- Help ---
 
 var helpSections = []struct {
@@ -538,10 +753,10 @@ var helpSections = []struct {
 		{"q, ctrl+c", "quit"},
 	}},
 	{"worktrees", [][2]string{
-		{"enter, o", "pick worktree — prints its path on exit"},
+		{"y", "yank the path to the clipboard"},
 		{"n", "create a worktree"},
 		{"d", "delete the selected worktree"},
-		{"y", "yank the path to the clipboard"},
+		{"i, tab", "inspect: path, git state, recent commits"},
 		{"r", "refresh git state now"},
 	}},
 	{"view", [][2]string{

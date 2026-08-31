@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/trebaud/mori/v2/internal"
+	"github.com/trebaud/mori/v2/internal/git"
 )
 
 // Layout constants. A worktree is one row — branch, git state, sync, age and
@@ -23,6 +24,16 @@ const (
 	// of a card sit too far apart to read as one row.
 	maxContentWidth = 100
 	refreshEvery    = 15 * time.Second
+)
+
+// A worktree that was just created is one more row in a list of twenty. For
+// a moment after it appears, an underline sweeps once across its name — the
+// list paints no backgrounds, and an underline reads on a monochrome terminal
+// as well as a colored one.
+const (
+	sweepWindow   = 4  // columns lit at once
+	sweepFrames   = 14 // steps the sweep takes, whatever the name's length
+	sweepInterval = 45 * time.Millisecond
 )
 
 // Status-message bucket durations.
@@ -42,6 +53,7 @@ const (
 	modeCreate
 	modeCreating
 	modeConfirmDelete
+	modeDetail
 )
 
 type stepState int
@@ -86,13 +98,26 @@ type worktreeRemovedMsg struct {
 	err error
 }
 
+// detailLoadedMsg carries the history the detail pane asked git for. branch
+// identifies which request it answers, so a pane closed and reopened on
+// another worktree never renders the previous one's log.
+type detailLoadedMsg struct {
+	branch  string
+	commits []git.Commit
+	err     error
+}
+
 // --- Model (Elm: Model) ---
 
 type model struct {
 	worktrees []internal.Worktree
 	filtered  []int // indices into worktrees, in display order
 	cursor    int   // index into filtered
-	selected  int   // index into worktrees once the user picks one, else -1
+	// selected is the worktree the session hands back on exit, or -1. No key
+	// sets it: the list is a browser, and a path leaves mori through the
+	// clipboard (`y`), not through stdout. The field and the plumbing behind
+	// it stay so a picking key can be bound again without rewiring Select.
+	selected int
 
 	repoLabel     string
 	baseBranch    string
@@ -109,6 +134,16 @@ type model struct {
 
 	scrollOffset int // first visible card
 	deleteTarget int // index into filtered
+
+	detailBranch  string // the worktree the open pane describes
+	detailCommits []git.Commit
+	detailErr     error
+	detailLoading bool
+
+	// sweepBranch is the freshly created worktree being highlighted, empty
+	// once the sweep has run its course.
+	sweepBranch string
+	sweepFrame  int
 
 	animFrame      int
 	creatingBranch string
@@ -248,6 +283,20 @@ func (m *model) applyFilter() {
 		m.cursor = max(0, len(m.filtered)-1)
 	}
 	m.adjustScroll()
+}
+
+// focusBranch puts the cursor on a branch if it is on show, so the worktree
+// that just appeared is the one under the caret. It reports whether the
+// branch was there; a filter that excludes it leaves the cursor alone.
+func (m *model) focusBranch(branch string) bool {
+	for i, idx := range m.filtered {
+		if m.worktrees[idx].Branch == branch {
+			m.cursor = i
+			m.adjustScroll()
+			return true
+		}
+	}
+	return false
 }
 
 // dirtyCount is how many visible worktrees have uncommitted changes.

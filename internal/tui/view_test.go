@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -9,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/trebaud/mori/v2/internal"
+	"github.com/trebaud/mori/v2/internal/git"
 )
 
 func testWorktrees(n int) []internal.Worktree {
@@ -187,6 +190,7 @@ func TestViewNeverExceedsTerminalWidth(t *testing.T) {
 		"search": modeSearch,
 		"create": modeCreate,
 		"delete": modeConfirmDelete,
+		"detail": modeDetail,
 	}
 	for name, mode := range modes {
 		// n=0 covers the empty state, which centers itself rather than
@@ -195,6 +199,7 @@ func TestViewNeverExceedsTerminalWidth(t *testing.T) {
 			for _, width := range []int{50, 80, 120} {
 				m := newTestModel(t, n, width, 24)
 				m.mode = mode
+				m.detailCommits = testCommits(6)
 				m.textInput.Placeholder = "filter by branch or path…"
 				m.syncInputWidth()
 				for _, line := range strings.Split(m.View().Content, "\n") {
@@ -215,9 +220,11 @@ func TestOverlayCardRowsShareWidth(t *testing.T) {
 		m.textInput.Placeholder = "branch name"
 		m.syncInputWidth()
 
+		m.detailCommits = testCommits(6)
 		cards := map[string]string{
 			"create": m.renderCreateCard(width),
 			"delete": m.renderDeleteCard(width),
+			"detail": m.renderDetailCard(width),
 		}
 		for name, card := range cards {
 			rows := strings.Split(card, "\n")
@@ -228,6 +235,78 @@ func TestOverlayCardRowsShareWidth(t *testing.T) {
 						name, width, i, got, want, plain(card))
 					break
 				}
+			}
+		}
+	}
+}
+
+func testCommits(n int) []git.Commit {
+	cs := make([]git.Commit, 0, n)
+	for i := 1; i <= n; i++ {
+		cs = append(cs, git.Commit{
+			SHA:     fmt.Sprintf("%07d", i),
+			Subject: "commit subject " + strings.Repeat("long ", i),
+			When:    time.Now().Add(-time.Duration(i) * time.Hour),
+		})
+	}
+	return cs
+}
+
+// The detail pane floats over the list, so it has to fit the terminal it
+// floats in — otherwise the compositor clips its bottom border away.
+func TestDetailCardFitsTerminalHeight(t *testing.T) {
+	for _, height := range []int{minViewHeight, 16, 20, 24, 40, 60} {
+		m := newTestModel(t, 6, 80, height)
+		m.mode = modeDetail
+		m.detailCommits = testCommits(detailCommitLimit)
+		card := m.renderDetailCard(80)
+		if got := lipgloss.Height(card); got > height {
+			t.Errorf("height=%d: card is %d rows:\n%s", height, got, plain(card))
+		}
+	}
+}
+
+// The pane exists to spell out what the row only had glyphs for: the full
+// path, the git state in words, and the commits behind the branch.
+func TestDetailCardShowsStateAndHistory(t *testing.T) {
+	m := newTestModel(t, 6, 80, 40)
+	m.mode = modeDetail
+	m.cursor = 2
+	m.detailCommits = testCommits(3)
+	wt := m.worktrees[m.filtered[2]]
+
+	out := plain(m.renderDetailCard(80))
+	for _, want := range []string{
+		wt.Label(), wt.DisplayPath, wt.Head,
+		"uncommitted", "ahead of main", "history", "0000001",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("detail pane is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// A worktree whose history has not arrived yet, or has none, still renders a
+// well-formed card rather than a heading over nothing.
+func TestDetailCardWithoutHistory(t *testing.T) {
+	for name, setup := range map[string]func(*model){
+		"loading": func(m *model) { m.detailLoading = true },
+		"empty":   func(m *model) {},
+		"error":   func(m *model) { m.detailErr = errors.New("reading history: exit 128") },
+	} {
+		m := newTestModel(t, 3, 80, 24)
+		m.mode = modeDetail
+		setup(&m)
+		rows := strings.Split(m.renderDetailCard(80), "\n")
+		want := lipgloss.Width(rows[0])
+		for i, row := range rows {
+			if got := lipgloss.Width(row); got != want {
+				t.Fatalf("%s: row %d is %d columns, want %d", name, i, got, want)
+			}
+		}
+		for _, row := range rows {
+			if strings.TrimSpace(plain(row)) == "history" {
+				t.Errorf("%s: drew a history heading with no commits", name)
 			}
 		}
 	}

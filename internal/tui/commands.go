@@ -110,6 +110,27 @@ func spinnerTickCmd() tea.Cmd {
 	return tea.Tick(80*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
 }
 
+// loadDetailCmd reads the tail of a worktree's history off the UI goroutine.
+// detailCommitLimit bounds the query; the pane renders as many as the
+// terminal has room for.
+const detailCommitLimit = 12
+
+func loadDetailCmd(branch, path string) tea.Cmd {
+	return func() tea.Msg {
+		commits, err := git.RecentCommits(path, detailCommitLimit)
+		return detailLoadedMsg{branch: branch, commits: commits, err: err}
+	}
+}
+
+// sweepTickMsg advances the highlight over a newly created worktree.
+type sweepTickMsg struct{}
+
+// sweepTickCmd schedules the next frame of that highlight. Faster than the
+// spinner: this one is a single pass, not a wait.
+func sweepTickCmd() tea.Cmd {
+	return tea.Tick(sweepInterval, func(time.Time) tea.Msg { return sweepTickMsg{} })
+}
+
 // removeWorktreeCmd removes a worktree and emits worktreeRemovedMsg.
 func removeWorktreeCmd(path string, force bool) tea.Cmd {
 	return func() tea.Msg {
