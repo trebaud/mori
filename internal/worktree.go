@@ -26,6 +26,19 @@ type Worktree struct {
 	Ahead       int       // commits ahead of the default branch
 	Behind      int       // commits behind the default branch
 	LastCommit  time.Time // timestamp of HEAD
+	Created     time.Time // when the worktree was created, zero for the main tree
+}
+
+// Age is the time the worktree has existed, which is what a listing means by
+// "age": these are short-lived directories, and the date on the commit they
+// were branched from says nothing about when you made one. Falls back to the
+// HEAD timestamp when the creation time is unavailable — the main working
+// tree, or a worktree git created some other way.
+func (w Worktree) Age() time.Time {
+	if !w.Created.IsZero() {
+		return w.Created
+	}
+	return w.LastCommit
 }
 
 // Label is the worktree's display name: its branch, or a detached HEAD marker.
@@ -67,6 +80,7 @@ func List() ([]Worktree, error) {
 			defer wg.Done()
 			w.Dirty = git.DirtyCount(w.Path)
 			w.LastCommit = git.LastCommit(w.Path)
+			w.Created = git.Created(w.Path)
 			if w.Branch != base {
 				w.Ahead, w.Behind = git.AheadBehind(w.Path, base)
 			}
@@ -249,7 +263,7 @@ func SortIndices(wts []Worktree, indices []int, mode SortMode) {
 		x, y := wts[indices[a]], wts[indices[b]]
 		switch mode {
 		case SortRecent:
-			return x.LastCommit.After(y.LastCommit)
+			return x.Age().After(y.Age())
 		case SortName:
 			return strings.ToLower(x.Label()) < strings.ToLower(y.Label())
 		}

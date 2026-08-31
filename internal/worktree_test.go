@@ -118,3 +118,16 @@ func TestSortModeNextCycles(t *testing.T) {
 		t.Errorf("Next() did not cycle back to default after 3 steps, got %v", m)
 	}
 }
+
+func TestAgePrefersCreationTime(t *testing.T) {
+	now := time.Now()
+	created := Worktree{LastCommit: now.Add(-9 * time.Hour), Created: now.Add(-time.Minute)}
+	if got := created.Age(); !got.Equal(created.Created) {
+		t.Errorf("Age() = %v, want the creation time %v", got, created.Created)
+	}
+	// The main working tree has no creation time; it falls back to HEAD.
+	main := Worktree{LastCommit: now.Add(-9 * time.Hour)}
+	if got := main.Age(); !got.Equal(main.LastCommit) {
+		t.Errorf("Age() = %v, want the HEAD timestamp %v", got, main.LastCommit)
+	}
+}

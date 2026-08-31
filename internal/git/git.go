@@ -170,3 +170,17 @@ func AheadBehind(path, base string) (ahead, behind int) {
 	ahead, _ = strconv.Atoi(fields[1])
 	return ahead, behind
 }
+
+// Created returns when the linked worktree at path was created, read from the
+// mtime of its `.git` file. Git writes that file once, at `git worktree add`,
+// and never touches it again, so it dates the worktree itself rather than the
+// commit it happens to point at. The zero time is returned for the main
+// working tree — where `.git` is a directory whose mtime moves with every
+// git operation — and when the file cannot be read.
+func Created(path string) time.Time {
+	info, err := os.Stat(filepath.Join(path, ".git"))
+	if err != nil || info.IsDir() {
+		return time.Time{}
+	}
+	return info.ModTime()
+}

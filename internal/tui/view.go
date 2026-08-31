@@ -251,7 +251,7 @@ func (m model) rowColumns(width int) rowColumns {
 		natural = max(natural, lipgloss.Width(m.rowLabel(wt)))
 		c.state = max(c.state, lipgloss.Width(gitStateText(wt)))
 		c.sync = max(c.sync, lipgloss.Width(syncText(wt)))
-		c.age = max(c.age, lipgloss.Width(relativeTime(wt.LastCommit)))
+		c.age = max(c.age, lipgloss.Width(relativeTime(wt.Age())))
 		c.head = max(c.head, lipgloss.Width(wt.Head))
 	}
 
@@ -339,7 +339,7 @@ func (m model) renderRow(idx, width int, c rowColumns) string {
 	}
 	row += cell(gitStateText(wt), c.state, 1+c.slack, true, stateStyle, p.fill)
 	row += cell(syncText(wt), c.sync, 1, true, p.meta, p.fill)
-	row += cell(relativeTime(wt.LastCommit), c.age, 2, true, p.meta, p.fill)
+	row += cell(relativeTime(wt.Age()), c.age, 2, true, p.meta, p.fill)
 	row += cell(wt.Head, c.head, 2, false, p.head, p.fill)
 
 	// Pad to the full width so the tint runs edge to edge. Measuring the row
