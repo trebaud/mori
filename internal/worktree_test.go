@@ -64,6 +64,8 @@ func TestDisplayPath(t *testing.T) {
 		// relative to it.
 		{"/home/t/repo/.claude/worktrees/legacy", ".claude/worktrees/legacy"},
 		{"/srv/wt", "/srv/wt"},
+		// A sibling whose name merely starts with home's is not under it.
+		{"/home/tomato/wt", "/home/tomato/wt"},
 	}
 	for _, c := range cases {
 		if got := displayPath(c.path, main, home); got != c.want {

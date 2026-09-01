@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // relativeTime renders a timestamp as a bare "12m" age. The column is
@@ -237,6 +238,13 @@ func renderFrame(content string, width int, title string) string {
 	var out strings.Builder
 	out.WriteString(top + "\n")
 	for _, ln := range strings.Split(content, "\n") {
+		// The frame is the last word on width: a line wider than the card is
+		// clipped here rather than allowed to run past the right border. Cut
+		// with ansi.Truncate, which counts display columns and leaves the
+		// escape sequences around them intact.
+		if lipgloss.Width(ln) > innerW {
+			ln = ansi.Truncate(ln, innerW, "…")
+		}
 		pad := innerW - lipgloss.Width(ln)
 		if pad < 0 {
 			pad = 0

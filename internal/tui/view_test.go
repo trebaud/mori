@@ -244,7 +244,9 @@ func testCommits(n int) []git.Commit {
 	cs := make([]git.Commit, 0, n)
 	for i := 1; i <= n; i++ {
 		cs = append(cs, git.Commit{
-			SHA:     fmt.Sprintf("%07d", i),
+			// Ten columns, not seven: git abbreviates a sha to whatever is
+			// unambiguous in the repository, and a big one runs long.
+			SHA:     fmt.Sprintf("%010d", i),
 			Subject: "commit subject " + strings.Repeat("long ", i),
 			When:    time.Now().Add(-time.Duration(i) * time.Hour),
 		})
@@ -278,7 +280,7 @@ func TestDetailCardShowsStateAndHistory(t *testing.T) {
 	out := plain(m.renderDetailCard(80))
 	for _, want := range []string{
 		wt.Label(), wt.DisplayPath, wt.Head,
-		"uncommitted", "ahead of main", "history", "0000001",
+		"uncommitted", "ahead of main", "history", "0000000001",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("detail pane is missing %q:\n%s", want, out)
@@ -309,6 +311,44 @@ func TestDetailCardWithoutHistory(t *testing.T) {
 				t.Errorf("%s: drew a history heading with no commits", name)
 			}
 		}
+	}
+}
+
+// The history block measures its own sha and age columns. renderFrame clips
+// an overlong line, so a subject sized against a guessed prefix would still
+// look square — it would just lose its last words for no reason. Check the
+// lines before the frame ever sees them.
+func TestDetailHistoryLinesFitInnerWidth(t *testing.T) {
+	const innerW = 60
+	m := newTestModel(t, 3, 80, 40)
+	m.detailCommits = testCommits(4)
+	// Subjects longer than the pane can hold: a column sized too wide only
+	// shows up once the text is long enough to reach the border.
+	for i := range m.detailCommits {
+		m.detailCommits[i].Subject = "commit subject " + strings.Repeat("long ", 20)
+	}
+	// A short sha among long ones: the column is as wide as the widest, and
+	// the narrow one is padded up to it rather than shifting its subject left.
+	m.detailCommits[2].SHA = "abc1234"
+
+	// Every pane line opens with a one-column left margin, which sits outside
+	// the innerW its content is sized against.
+	const budget = innerW + 1
+
+	var subjectCol = -1
+	for _, ln := range m.detailHistoryLines(innerW) {
+		if got := lipgloss.Width(ln.text); got > budget {
+			t.Errorf("history line is %d columns, want at most %d:\n%s", got, budget, plain(ln.text))
+		}
+		if at := strings.Index(plain(ln.text), "commit subject"); at >= 0 {
+			if subjectCol >= 0 && at != subjectCol {
+				t.Errorf("subject starts at column %d, want %d:\n%s", at, subjectCol, plain(ln.text))
+			}
+			subjectCol = at
+		}
+	}
+	if subjectCol < 0 {
+		t.Fatal("no commit subjects rendered")
 	}
 }
 

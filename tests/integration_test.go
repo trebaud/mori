@@ -99,11 +99,24 @@ func worktreePath(repoDir, branch string) string {
 	return filepath.Join(testHome(repoDir), ".mori", "worktrees", filepath.Base(repoDir), branch)
 }
 
+// tempRoot is t.TempDir() with symlinks resolved. On macOS the temp directory
+// sits under /var, which is a link to /private/var, and git reports every
+// worktree path resolved. Handing the unresolved spelling to HOME and to the
+// paths a test expects makes mori's output differ from it by prefix alone.
+func tempRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to resolve temp dir: %v", err)
+	}
+	return root
+}
+
 // initTestRepo creates a temp git repo with one commit on "main", alongside a
 // fake home directory for mori's state.
 func initTestRepo(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := tempRoot(t)
 	dir := filepath.Join(root, "repo")
 	if err := os.MkdirAll(filepath.Join(root, "home"), 0o755); err != nil {
 		t.Fatalf("failed to create fake home: %v", err)
@@ -315,7 +328,7 @@ func TestNewNotAGitRepo(t *testing.T) {
 
 func TestNewNoCommits(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := tempRoot(t)
 	dir := filepath.Join(root, "repo")
 	os.MkdirAll(dir, 0o755)
 	gitInRepo(t, dir, "init", "-b", "main")
@@ -414,8 +427,11 @@ func TestListJSON(t *testing.T) {
 	if wt.DisplayPath != filepath.Join("~/.mori", "worktrees", "repo", "json-branch") {
 		t.Errorf("display_path = %q", wt.DisplayPath)
 	}
-	if len(wt.Head) != 7 {
-		t.Errorf("head = %q, want a 7-character short sha", wt.Head)
+	// Short, not seven: git abbreviates a sha to whatever is unambiguous in
+	// the repository, which is seven here and more in a large one. Pinning the
+	// exact width would assert a rule git does not follow.
+	if len(wt.Head) == 0 || len(wt.Head) >= 40 {
+		t.Errorf("head = %q, want an abbreviated sha", wt.Head)
 	}
 	if wt.LastCommit == "" {
 		t.Error("last_commit should be set")

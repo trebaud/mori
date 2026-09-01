@@ -68,7 +68,7 @@ func List() ([]Worktree, error) {
 
 	wts := parseList(out)
 	base := git.DefaultBranch(mainPath)
-	home, _ := os.UserHomeDir()
+	home := homeDir()
 
 	var wg sync.WaitGroup
 	for i := range wts {
@@ -159,10 +159,26 @@ func displayPath(path, mainPath, home string) string {
 	if path != mainPath && strings.HasPrefix(path, mainPath+string(filepath.Separator)) {
 		return path[len(mainPath)+1:]
 	}
-	if home != "" && strings.HasPrefix(path, home) {
+	// The separator matters: without it a home of /home/tom claims every path
+	// under /home/tomato and renders it as "~ato/...".
+	if home != "" && (path == home || strings.HasPrefix(path, home+string(filepath.Separator))) {
 		return "~" + path[len(home):]
 	}
 	return path
+}
+
+// homeDir is the home directory with symlinks resolved. git reports worktree
+// paths resolved, so an unresolved home — /home/me pointing somewhere else on
+// the disk — never matches one by prefix, and every path prints in full.
+func homeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		return resolved
+	}
+	return home
 }
 
 // CreateResult holds the outcome of a worktree creation.

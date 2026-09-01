@@ -716,18 +716,23 @@ func (m model) detailHistoryLines(innerW int) []detailLine {
 		return []detailLine{{" " + mutedStyle.Render("no commits yet"), dropHeading}}
 	}
 
-	ageW := 3
+	// Both prefix columns are measured, never assumed: git abbreviates %h to
+	// whatever keeps a sha unambiguous in that repository, so a big one prints
+	// ten columns where a fresh one prints seven. A guessed width here is a
+	// subject three columns too wide, and the frame has no say in it.
+	shaW, ageW := 0, 3
 	for _, cm := range m.detailCommits {
+		shaW = max(shaW, lipgloss.Width(cm.SHA))
 		ageW = max(ageW, lipgloss.Width(relativeTime(cm.When)))
 	}
-	// sha, two gaps, the age column, and the left margin.
-	subjectW := max(4, innerW-shaWidth-4-ageW)
+	// The sha, the two gaps around the age column, and the age column itself.
+	subjectW := max(4, innerW-shaW-4-ageW)
 
 	lines := []detailLine{{" " + columnStyle.Render("history"), dropHeading}}
 	for i, cm := range m.detailCommits {
 		age := relativeTime(cm.When)
 		lines = append(lines, detailLine{
-			" " + dimStyle.Render(cm.SHA) +
+			" " + dimStyle.Render(cm.SHA) + strings.Repeat(" ", shaW-lipgloss.Width(cm.SHA)) +
 				"  " + mutedStyle.Render(age) + strings.Repeat(" ", ageW-lipgloss.Width(age)) +
 				"  " + textStyle.Render(truncate(cm.Subject, subjectW)),
 			dropCommit + i,
@@ -735,9 +740,6 @@ func (m model) detailHistoryLines(innerW int) []detailLine {
 	}
 	return lines
 }
-
-// shaWidth is the width of an abbreviated sha as git prints it.
-const shaWidth = 7
 
 // --- Help ---
 
