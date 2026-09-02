@@ -412,6 +412,9 @@ func (m model) footerHints() []keyHint {
 			hints = append(hints, keyHint{key: "x", label: "unarchive", prio: 3})
 		}
 	}
+	if m.undo != nil {
+		hints = append(hints, keyHint{key: "u", label: "undo delete", prio: 1})
+	}
 	if m.textInput.Value() != "" {
 		hints = append(hints, keyHint{key: "esc", label: "clear filter"})
 	} else if len(m.filtered) > 0 {
@@ -520,7 +523,7 @@ func (m model) renderCreatingCard(width int) string {
 }
 
 func (m model) renderDeleteCard(width int) string {
-	w := cardWidth(width, 64)
+	w := cardWidth(width, createCardMaxWidth)
 	if m.deleteTarget >= len(m.filtered) {
 		return renderFrame("\n "+mutedStyle.Render("nothing to delete")+"\n", w, "delete worktree")
 	}
@@ -536,7 +539,7 @@ func (m model) renderDeleteCard(width int) string {
 		if wt.Dirty == 1 {
 			noun = "file"
 		}
-		for _, ln := range wrapText(fmt.Sprintf("⚠ %d uncommitted %s will be lost", wt.Dirty, noun), w-4) {
+		for _, ln := range wrapText(fmt.Sprintf("⚠ %d uncommitted %s will be lost — u cannot bring those back", wt.Dirty, noun), w-4) {
 			c.WriteString(" " + warnStyle.Render(ln) + "\n")
 		}
 		c.WriteString("\n")
@@ -548,7 +551,16 @@ func (m model) renderDeleteCard(width int) string {
 		c.WriteString("\n")
 	}
 
-	c.WriteString(" " + renderHints([]keyHint{{key: "y", label: "delete"}, {key: "esc", label: "cancel"}}) + "\n")
+	// A clean worktree is a checkout away from coming back, so enter is
+	// enough. A dirty one asks for the name: the pause is the point.
+	hints := []keyHint{{key: "enter", label: "delete"}, {key: "esc", label: "cancel"}}
+	if m.deleteNeedsName {
+		c.WriteString(" " + titleStyle.Render("❯") + "  " + m.textInput.View() + "\n\n")
+		if strings.TrimSpace(m.textInput.Value()) != wt.Label() {
+			hints = []keyHint{{key: "esc", label: "cancel"}}
+		}
+	}
+	c.WriteString(" " + renderHints(hints) + "\n")
 
 	return renderFrame(c.String(), w, "delete worktree")
 }
@@ -761,6 +773,7 @@ var helpSections = []struct {
 		{"y", "copy the path to the clipboard"},
 		{"n", "create a worktree"},
 		{"d", "delete the selected worktree"},
+		{"u", "restore the last deleted worktree"},
 		{"i, tab", "inspect: path, git state, recent commits"},
 		{"r", "refresh git state now"},
 	}},

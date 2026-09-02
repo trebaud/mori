@@ -131,10 +131,32 @@ func sweepTickCmd() tea.Cmd {
 	return tea.Tick(sweepInterval, func(time.Time) tea.Msg { return sweepTickMsg{} })
 }
 
-// removeWorktreeCmd removes a worktree and emits worktreeRemovedMsg.
-func removeWorktreeCmd(path string, force bool) tea.Cmd {
+// removeWorktreeCmd removes a worktree and emits worktreeRemovedMsg, carrying
+// back what `u` would need to put it there again.
+func removeWorktreeCmd(wt internal.Worktree) tea.Cmd {
 	return func() tea.Msg {
-		return worktreeRemovedMsg{err: internal.RemoveWorktree(path, force)}
+		// Force: the confirmation already spelled out any uncommitted work,
+		// and for a dirty worktree it asked for the branch name in full.
+		if err := internal.RemoveWorktree(wt.Path, true); err != nil {
+			return worktreeRemovedMsg{err: err}
+		}
+		msg := worktreeRemovedMsg{}
+		if wt.Branch != "" {
+			msg.removed = &removedWorktree{
+				branch: wt.Branch, path: wt.Path, displayPath: wt.DisplayPath,
+			}
+		}
+		return msg
+	}
+}
+
+// restoreWorktreeCmd checks a removed worktree's branch back out where it was.
+func restoreWorktreeCmd(rm removedWorktree) tea.Cmd {
+	return func() tea.Msg {
+		return worktreeRestoredMsg{
+			branch: rm.branch,
+			err:    internal.RestoreWorktree(findRepoRoot(), rm.path, rm.branch),
+		}
 	}
 }
 

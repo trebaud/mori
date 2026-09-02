@@ -110,6 +110,20 @@ func AddWorktree(repo, dir, branch, baseBranch string) error {
 	return nil
 }
 
+// AttachWorktree creates a worktree at dir checking out a branch that already
+// exists. `git worktree remove` deletes the directory but leaves the branch
+// alone, so this is what puts a removed worktree back.
+func AttachWorktree(repo, dir, branch string) error {
+	cmd := exec.Command("git", "-C", repo, "worktree", "add", dir, branch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+		return err
+	}
+	return nil
+}
+
 // RemoveWorktree removes a git worktree. If force is true, --force is passed.
 func RemoveWorktree(path string, force bool) error {
 	args := []string{"worktree", "remove"}

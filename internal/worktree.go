@@ -234,6 +234,19 @@ func RemoveWorktree(path string, force bool) error {
 	return nil
 }
 
+// RestoreWorktree checks a branch back out at path, undoing a removal. The
+// branch outlives `git worktree remove`, so everything that was committed
+// comes back; what was uncommitted when it went does not.
+func RestoreWorktree(repoRoot, path, branch string) error {
+	if branch == "" {
+		return fmt.Errorf("cannot restore a detached worktree")
+	}
+	if err := git.AttachWorktree(repoRoot, path, branch); err != nil {
+		return fmt.Errorf("failed to restore worktree: %w", err)
+	}
+	return nil
+}
+
 // FindByBranch returns the worktree on the given branch, or nil.
 func FindByBranch(worktrees []Worktree, branch string) *Worktree {
 	for i := range worktrees {

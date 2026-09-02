@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/trebaud/mori/v2/internal"
@@ -186,5 +187,113 @@ func TestYankMessageCarriesThePath(t *testing.T) {
 	}
 	if strings.Contains(m.statusMsg.text, "clipboard") {
 		t.Errorf("yank message claims the clipboard worked: %q", m.statusMsg.text)
+	}
+}
+
+// `y` yanks a path one mode over. Binding it to "delete" as well would put an
+// unrecoverable action under a key the hand already reaches for.
+func TestDeleteConfirmationIgnoresY(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.worktrees[m.filtered[0]].Dirty = 0
+	m.cursor = 0
+	next, _ := m.handleNormalKey("d")
+	m = next.(model)
+
+	for _, key := range []string{"y", "Y"} {
+		after, cmd := m.handleDeleteKey(tea.KeyPressMsg{}, key)
+		if cmd != nil {
+			t.Fatalf("%q started a removal from the confirmation", key)
+		}
+		if after.(model).mode != modeConfirmDelete {
+			t.Fatalf("%q left the confirmation", key)
+		}
+	}
+}
+
+// A clean worktree is a checkout away from coming back, so enter is enough.
+func TestEnterDeletesACleanWorktree(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.worktrees[m.filtered[1]].Dirty = 0
+	m.cursor = 1
+	next, _ := m.handleNormalKey("d")
+	m = next.(model)
+
+	if m.deleteNeedsName {
+		t.Fatal("a clean worktree asked for its name to be typed")
+	}
+	after, cmd := m.handleDeleteKey(tea.KeyPressMsg{}, "enter")
+	if cmd == nil {
+		t.Fatal("enter did not remove the clean worktree")
+	}
+	if after.(model).mode != modeNormal {
+		t.Fatal("the confirmation stayed open after enter")
+	}
+}
+
+// A dirty one holds until its branch name is typed out: those files are the
+// one thing undo cannot bring back.
+func TestDirtyWorktreeNeedsItsNameTyped(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.cursor = 0
+	wt := m.worktrees[m.filtered[0]]
+	if wt.Dirty == 0 {
+		t.Fatal("test fixture is not dirty")
+	}
+	next, _ := m.handleNormalKey("d")
+	m = next.(model)
+
+	if !m.deleteNeedsName {
+		t.Fatal("a dirty worktree went without asking for its name")
+	}
+	if _, cmd := m.handleDeleteKey(tea.KeyPressMsg{}, "enter"); cmd != nil {
+		t.Fatal("enter removed a dirty worktree on an empty confirmation")
+	}
+
+	m.textInput.SetValue(wt.Label()[:2])
+	if _, cmd := m.handleDeleteKey(tea.KeyPressMsg{}, "enter"); cmd != nil {
+		t.Fatal("enter removed a dirty worktree on a half-typed name")
+	}
+
+	m.textInput.SetValue(wt.Label())
+	if _, cmd := m.handleDeleteKey(tea.KeyPressMsg{}, "enter"); cmd == nil {
+		t.Fatal("the typed-out name did not release the removal")
+	}
+}
+
+// A removal arms undo, and `u` spends it exactly once.
+func TestUndoRestoresTheLastRemoval(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+
+	if _, cmd := m.handleNormalKey("u"); cmd != nil {
+		t.Fatal("u did something with nothing to restore")
+	}
+
+	next, _ := m.Update(worktreeRemovedMsg{removed: &removedWorktree{
+		branch: "feat/gone", path: "/w/feat/gone", displayPath: "~/w/feat/gone",
+	}})
+	m = next.(model)
+	if m.undo == nil {
+		t.Fatal("a removal left nothing to undo")
+	}
+	if !strings.Contains(m.statusMsg.text, "u to restore") {
+		t.Errorf("the removal did not offer the undo: %q", m.statusMsg.text)
+	}
+
+	after, cmd := m.handleNormalKey("u")
+	m = after.(model)
+	if cmd == nil {
+		t.Fatal("u did not start a restore")
+	}
+	if m.undo != nil {
+		t.Error("u left the undo armed for a second spend")
+	}
+}
+
+// A detached worktree has no branch to check back out, so nothing is offered.
+func TestDetachedRemovalArmsNoUndo(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	next, _ := m.Update(worktreeRemovedMsg{})
+	if next.(model).undo != nil {
+		t.Fatal("a removal with no branch armed the undo anyway")
 	}
 }

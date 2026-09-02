@@ -80,6 +80,13 @@ type statusMsg struct {
 	expires   time.Time
 }
 
+// removedWorktree is what `u` needs to undo a removal. `git worktree remove`
+// takes the directory and leaves the branch, so checking the branch back out
+// at the same path restores everything that had been committed.
+type removedWorktree struct {
+	branch, path, displayPath string
+}
+
 // refreshedMsg carries a freshly queried worktree list.
 type refreshedMsg struct {
 	worktrees []internal.Worktree
@@ -96,6 +103,15 @@ type worktreeCreatedMsg struct {
 
 type worktreeRemovedMsg struct {
 	err error
+	// removed is the worktree that went, kept so `u` can put it back. Nil
+	// when the removal failed or the worktree had no branch to check out.
+	removed *removedWorktree
+}
+
+// worktreeRestoredMsg answers an undo.
+type worktreeRestoredMsg struct {
+	branch string
+	err    error
 }
 
 // detailLoadedMsg carries the history the detail pane asked git for. branch
@@ -134,6 +150,12 @@ type model struct {
 
 	scrollOffset int // first visible card
 	deleteTarget int // index into filtered
+	// deleteNeedsName is set when the worktree being confirmed has
+	// uncommitted work. A keystroke is too cheap for something unrecoverable,
+	// so that case asks for the branch name typed out.
+	deleteNeedsName bool
+	// undo remembers the last worktree removed, so `u` can put it back.
+	undo *removedWorktree
 
 	detailBranch  string // the worktree the open pane describes
 	detailCommits []git.Commit
@@ -239,7 +261,7 @@ func (m *model) syncInputWidth() {
 	}
 
 	var avail int
-	if m.mode == modeCreate {
+	if m.mode == modeCreate || m.mode == modeConfirmDelete {
 		// Card interior, less the frame and the "❯  " prefix.
 		avail = cardWidth(width, createCardMaxWidth) - 6
 	} else {

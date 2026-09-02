@@ -130,7 +130,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = errorStatus("remove failed: " + msg.err.Error())
 			return m, nil
 		}
-		m.statusMsg = infoStatus("worktree removed")
+		m.undo = msg.removed
+		if m.undo != nil {
+			m.statusMsg = infoStatus("removed " + m.undo.branch + " — u to restore")
+		} else {
+			m.statusMsg = infoStatus("worktree removed")
+		}
+		return m, refreshCmd()
+
+	case worktreeRestoredMsg:
+		if msg.err != nil {
+			m.statusMsg = errorStatus("restore failed: " + msg.err.Error())
+			return m, nil
+		}
+		m.statusMsg = infoStatus("restored " + msg.branch)
+		// Point the caret at it once the refresh carries it, the same way a
+		// create does — a restore is a create as far as the list is concerned.
+		m.sweepBranch = msg.branch
+		m.sweepFrame = 0
 		return m, refreshCmd()
 
 	case tea.KeyPressMsg:
@@ -156,7 +173,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case modeConfirmDelete:
-		return m.handleDeleteKey(key)
+		return m.handleDeleteKey(msg, key)
 	case modeDetail:
 		return m.handleDetailKey(key)
 	default:
@@ -239,11 +256,31 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 
 	case "d", "D":
 		// The list holds only linked worktrees; the IsMain check backstops
-		// that invariant because deleting is irreversible.
+		// that invariant because a removal takes the directory with it.
 		if wt := m.selectedWorktree(); wt != nil && !wt.IsMain {
 			m.mode = modeConfirmDelete
 			m.deleteTarget = m.cursor
+			m.deleteNeedsName = wt.Dirty > 0
+			if m.deleteNeedsName {
+				m.textInput.SetValue("")
+				m.textInput.Placeholder = "type " + wt.Label() + " to confirm"
+				m.syncInputWidth()
+				return m, m.textInput.Focus()
+			}
 		}
+
+	case "u":
+		// Undo the last removal. The branch survived it, so this is a
+		// checkout, not a resurrection: committed work comes back, whatever
+		// was uncommitted when it went does not.
+		if m.undo == nil {
+			m.statusMsg = errorStatus("nothing to restore")
+			return m, nil
+		}
+		rm := *m.undo
+		m.undo = nil
+		m.statusMsg = loadingStatus("restoring " + rm.branch + "…")
+		return m, tea.Batch(restoreWorktreeCmd(rm), spinnerTickCmd())
 
 	case "/":
 		m.mode = modeSearch
@@ -354,20 +391,52 @@ func (m model) handleCreateKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 	return m, cmd
 }
 
-func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
+// handleDeleteKey drives the confirmation. `y` is deliberately not bound: it
+// yanks a path one mode over, and a hand that reaches for it out of habit
+// must not be the thing that removes a worktree. A clean one goes on enter;
+// a dirty one goes only once its branch name has been typed out in full.
+func (m model) handleDeleteKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 	switch key {
-	case "y", "Y":
-		m.mode = modeNormal
-		if m.deleteTarget < len(m.filtered) {
-			wt := m.worktrees[m.filtered[m.deleteTarget]]
-			m.statusMsg = loadingStatus("removing " + wt.Label() + "…")
-			// Force: the confirmation already spelled out any uncommitted work.
-			return m, tea.Batch(removeWorktreeCmd(wt.Path, true), spinnerTickCmd())
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		return m.cancelDelete(), nil
+	case "enter":
+		if m.deleteTarget >= len(m.filtered) {
+			return m.cancelDelete(), nil
 		}
-	case "n", "N", "esc", "ctrl+c":
-		m.mode = modeNormal
+		wt := m.worktrees[m.filtered[m.deleteTarget]]
+		if m.deleteNeedsName && strings.TrimSpace(m.textInput.Value()) != wt.Label() {
+			// Say nothing: the card already shows what it is waiting for, and
+			// a scolding status line under a half-typed name is noise.
+			return m, nil
+		}
+		m = m.cancelDelete()
+		m.statusMsg = loadingStatus("removing " + wt.Label() + "…")
+		return m, tea.Batch(removeWorktreeCmd(wt), spinnerTickCmd())
 	}
-	return m, nil
+
+	if !m.deleteNeedsName {
+		if key == "n" || key == "N" {
+			return m.cancelDelete(), nil
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+	return m, cmd
+}
+
+// cancelDelete leaves the confirmation and puts the shared text input back the
+// way the list found it, filter and all.
+func (m model) cancelDelete() model {
+	m.mode = modeNormal
+	m.deleteNeedsName = false
+	m.textInput.SetValue("")
+	m.textInput.Blur()
+	m.applyFilter()
+	return m
 }
 
 // handleDetailKey drives the detail pane. It is a read-only view, so it
