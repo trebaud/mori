@@ -551,14 +551,29 @@ func (m model) renderCreateCard(width int) string {
 	var c strings.Builder
 	c.WriteString("\n")
 	c.WriteString(" " + titleStyle.Render("❯") + "  " + m.textInput.View() + "\n\n")
-	c.WriteString(" " + dimStyle.Render("branches off ") + mutedStyle.Render(m.baseBranch) + "\n")
+	base := m.createBase
+	if base == "" {
+		base = m.baseBranch
+	}
+	c.WriteString(" " + dimStyle.Render("branches off ") + mutedStyle.Render(base) + "\n")
 	// Wrapped, not truncated: on a narrow card this note grows a line rather
 	// than trailing off mid-sentence.
 	for _, ln := range wrapText("leave it empty and mori will name it for you", w-3) {
 		c.WriteString(" " + dimStyle.Render(ln) + "\n")
 	}
 	c.WriteString("\n")
-	c.WriteString(" " + renderHints([]keyHint{{key: "enter", label: "create"}, {key: "esc", label: "cancel"}}) + "\n")
+
+	hints := []keyHint{{key: "enter", label: "create"}}
+	// The toggle is only worth naming when there is another base to toggle to.
+	if wt := m.selectedWorktree(); wt != nil && wt.Branch != "" && wt.Branch != m.baseBranch {
+		other := wt.Branch
+		if base == other {
+			other = m.baseBranch
+		}
+		hints = append(hints, keyHint{key: "tab", label: "off " + truncate(other, 20)})
+	}
+	hints = append(hints, keyHint{key: "esc", label: "cancel"})
+	c.WriteString(" " + renderHints(hints) + "\n")
 
 	return renderFrame(c.String(), w, "new worktree")
 }
@@ -926,7 +941,8 @@ var helpSections = []struct {
 	}},
 	{"worktrees", [][2]string{
 		{"y", "copy the path to the clipboard"},
-		{"n", "create a worktree"},
+		{"n", "create a worktree off the default branch"},
+		{"N", "create one off the branch under the cursor"},
 		{"d", "delete the selected worktree"},
 		{"u", "restore the last deleted worktree"},
 		{"i, tab", "inspect, or fold the side pane away"},

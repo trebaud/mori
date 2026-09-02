@@ -61,7 +61,7 @@ func rootCmd() *cobra.Command {
 }
 
 func newCmd() *cobra.Command {
-	var repoDir string
+	var repoDir, from string
 	cmd := &cobra.Command{
 		Use:   "new [branch]",
 		Short: "Create a new worktree",
@@ -71,10 +71,11 @@ func newCmd() *cobra.Command {
 			if len(args) > 0 {
 				branch = args[0]
 			}
-			return commands.Create(commands.CreateOptions{Repo: repoDir, Branch: branch})
+			return commands.Create(commands.CreateOptions{Repo: repoDir, Branch: branch, From: from})
 		},
 	}
 	cmd.Flags().StringVarP(&repoDir, "repo", "r", "", "Repository root (default: current directory)")
+	cmd.Flags().StringVar(&from, "from", "", "Branch to cut from (default: the repository default branch)")
 	return cmd
 }
 
@@ -166,6 +167,7 @@ Usage:
 
 Flags (new):
   -r, --repo PATH   Repository root (default: current directory)
+      --from BRANCH Branch to cut from (default: the repository default)
 
 Flags (list):
       --json        Output as JSON

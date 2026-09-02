@@ -189,10 +189,13 @@ type CreateResult struct {
 	HookResults []HookResult
 }
 
-// CreateWorktree creates a new git worktree on a new branch cut from the
-// repository's default branch, then runs the post-create hooks. When cb is
-// non-nil, progress is reported per step so callers can render live feedback.
-func CreateWorktree(repoRoot, branch string, cb *HookCallbacks) (CreateResult, error) {
+// CreateWorktree creates a new git worktree on a new branch cut from base,
+// then runs the post-create hooks. An empty base means the repository's
+// default branch, which is what most worktrees are cut from; naming another
+// is how you stack one branch on top of the one you are already working on.
+// When cb is non-nil, progress is reported per step so callers can render
+// live feedback.
+func CreateWorktree(repoRoot, branch, base string, cb *HookCallbacks) (CreateResult, error) {
 	hasCommits, err := git.HasCommits(repoRoot)
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("failed to check repo: %w", err)
@@ -201,7 +204,10 @@ func CreateWorktree(repoRoot, branch string, cb *HookCallbacks) (CreateResult, e
 		return CreateResult{}, fmt.Errorf("repository has no commits, cannot create worktree. Make at least one commit first")
 	}
 
-	baseBranch := git.DefaultBranch(repoRoot)
+	baseBranch := base
+	if baseBranch == "" {
+		baseBranch = git.DefaultBranch(repoRoot)
+	}
 	if err := claimRepoDir(repoRoot); err != nil {
 		return CreateResult{}, fmt.Errorf("failed to prepare %s: %w", WorktreesRoot(), err)
 	}

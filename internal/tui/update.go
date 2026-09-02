@@ -314,8 +314,15 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 			return m, tea.SetClipboard(wt.Path)
 		}
 
-	case "n":
+	case "n", "N":
 		m.mode = modeCreate
+		// `N` stacks on what the cursor is on; `n` cuts from the default.
+		m.createBase = m.baseBranch
+		if key == "N" {
+			if wt := m.selectedWorktree(); wt != nil && wt.Branch != "" {
+				m.createBase = wt.Branch
+			}
+		}
 		m.textInput.SetValue("")
 		m.textInput.Placeholder = "branch name"
 		m.syncInputWidth()
@@ -431,6 +438,16 @@ func (m model) handleCreateKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 	switch key {
 	case "ctrl+c":
 		return m, tea.Quit
+	case "tab":
+		// Change your mind about the base without leaving the card.
+		if wt := m.selectedWorktree(); wt != nil && wt.Branch != "" && wt.Branch != m.baseBranch {
+			if m.createBase == m.baseBranch {
+				m.createBase = wt.Branch
+			} else {
+				m.createBase = m.baseBranch
+			}
+		}
+		return m, nil
 	case "esc":
 		m.mode = modeNormal
 		m.textInput.SetValue("")
@@ -447,8 +464,8 @@ func (m model) handleCreateKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 		m.applyFilter()
 		m.mode = modeCreating
 		m.creatingBranch = branch
-		m.creatingSteps = planCreateSteps(findRepoRoot(), branch)
-		ch, stepCmd := startCreateWorktreeCmd(branch)
+		m.creatingSteps = planCreateSteps(findRepoRoot(), branch, m.createBase)
+		ch, stepCmd := startCreateWorktreeCmd(branch, m.createBase)
 		m.creatingChan = ch
 		return m, tea.Batch(stepCmd, spinnerTickCmd())
 	}

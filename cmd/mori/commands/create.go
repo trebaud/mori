@@ -13,6 +13,7 @@ import (
 type CreateOptions struct {
 	Repo   string // repository root; defaults to the working directory
 	Branch string // branch to create; a random name when empty
+	From   string // branch to cut from; the repository default when empty
 }
 
 // Create makes a new worktree, streaming each setup step to stderr and
@@ -55,7 +56,7 @@ func Create(opts CreateOptions) error {
 		},
 	}
 
-	result, err := internal.CreateWorktree(absRepo, branch, cb)
+	result, err := internal.CreateWorktree(absRepo, branch, opts.From, cb)
 	if err != nil {
 		fmt.Fprintf(progress, "    \033[1;31m✖\033[0m %v\n", err)
 		return err

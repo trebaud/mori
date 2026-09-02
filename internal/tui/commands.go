@@ -45,8 +45,11 @@ type spinnerTickMsg struct{}
 
 // planCreateSteps returns the steps CreateWorktree will perform, pre-populated
 // so the overlay can show the whole plan up front.
-func planCreateSteps(repoRoot, branch string) []creatingStep {
-	baseBranch := git.DefaultBranch(repoRoot)
+func planCreateSteps(repoRoot, branch, base string) []creatingStep {
+	baseBranch := base
+	if baseBranch == "" {
+		baseBranch = git.DefaultBranch(repoRoot)
+	}
 	dir := internal.TildePath(internal.WorktreeDir(repoRoot, branch))
 
 	steps := []creatingStep{{
@@ -64,7 +67,7 @@ func planCreateSteps(repoRoot, branch string) []creatingStep {
 // startCreateWorktreeCmd kicks off worktree creation in a goroutine, streaming
 // per-step progress over a channel. The returned channel is drained one message
 // at a time by waitStepCmd; the returned tea.Cmd reads the first message.
-func startCreateWorktreeCmd(branch string) (chan tea.Msg, tea.Cmd) {
+func startCreateWorktreeCmd(branch, base string) (chan tea.Msg, tea.Cmd) {
 	ch := make(chan tea.Msg, 64)
 	go func() {
 		defer close(ch)
@@ -76,7 +79,7 @@ func startCreateWorktreeCmd(branch string) (chan tea.Msg, tea.Cmd) {
 			},
 		}
 
-		result, err := internal.CreateWorktree(findRepoRoot(), branch, cb)
+		result, err := internal.CreateWorktree(findRepoRoot(), branch, base, cb)
 		if err != nil {
 			ch <- worktreeCreatedMsg{err: err}
 			return

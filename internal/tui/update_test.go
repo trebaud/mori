@@ -642,3 +642,44 @@ func TestDetailCardFollowsTheCursor(t *testing.T) {
 		t.Error("moving under the card scheduled no history load")
 	}
 }
+
+// `N` stacks a worktree on the branch under the cursor; `n` cuts from the
+// repository default.
+func TestCreateBaseFollowsTheKey(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.cursor = 1
+	under := m.worktrees[m.filtered[1]].Branch
+
+	next, _ := m.handleNormalKey("n")
+	if got := next.(model).createBase; got != m.baseBranch {
+		t.Errorf("n cut from %q, want the default %q", got, m.baseBranch)
+	}
+
+	next, _ = m.handleNormalKey("N")
+	stacked := next.(model)
+	if stacked.createBase != under {
+		t.Errorf("N cut from %q, want %q", stacked.createBase, under)
+	}
+
+	// tab swaps between the two without leaving the card.
+	next, _ = stacked.handleCreateKey(tea.KeyPressMsg{}, "tab")
+	if got := next.(model).createBase; got != m.baseBranch {
+		t.Errorf("tab left the base at %q, want %q", got, m.baseBranch)
+	}
+	next, _ = next.(model).handleCreateKey(tea.KeyPressMsg{}, "tab")
+	if got := next.(model).createBase; got != under {
+		t.Errorf("tab did not swap back to %q, got %q", under, got)
+	}
+}
+
+// A detached worktree has no branch to cut from, so N falls back.
+func TestNFallsBackForADetachedWorktree(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.worktrees[m.filtered[0]].Branch = ""
+	m.cursor = 0
+
+	next, _ := m.handleNormalKey("N")
+	if got := next.(model).createBase; got != m.baseBranch {
+		t.Errorf("N off a detached worktree cut from %q, want %q", got, m.baseBranch)
+	}
+}

@@ -242,8 +242,12 @@ type model struct {
 
 	animFrame      int
 	creatingBranch string
-	creatingSteps  []creatingStep
-	creatingChan   chan tea.Msg
+	// createBase is the branch the next worktree is cut from. `n` starts it at
+	// the repository default; `N` starts it at the branch under the cursor, so
+	// a worktree can be stacked on the one you are already working in.
+	createBase    string
+	creatingSteps []creatingStep
+	creatingChan  chan tea.Msg
 	// creatingDone holds the card open after a failed create so the output is
 	// readable. A create that went fine closes on its own.
 	creatingDone bool

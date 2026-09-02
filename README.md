@@ -23,6 +23,7 @@ Or build from source with `./scripts/install.sh`
 ```bash
 mori                  # TUI; enter cds into a worktree, `y` copies its path
 mori new feat         # Create a worktree on a new branch "feat"
+mori new feat --from x  # ...cut from branch "x" instead of the default
 mori list             # Table of worktrees
 mori list --json      # Same, machine-readable
 mori path feat        # Print the directory for branch "feat"
