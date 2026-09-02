@@ -113,10 +113,10 @@ type model struct {
 	worktrees []internal.Worktree
 	filtered  []int // indices into worktrees, in display order
 	cursor    int   // index into filtered
-	// selected is the worktree the session hands back on exit, or -1. No key
-	// sets it: the list is a browser, and a path leaves mori through the
-	// clipboard (`y`), not through stdout. The field and the plumbing behind
-	// it stay so a picking key can be bound again without rewiring Select.
+	// selected is the worktree the session hands back on exit, or -1. `enter`
+	// sets it and quits: mori prints that path on stdout, and the shell
+	// function from `mori shell-init` turns the print into a cd. `y` is the
+	// second way out, for when you want the path somewhere else.
 	selected int
 
 	repoLabel     string

@@ -206,6 +206,14 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		m.cursor = max(0, m.cursor-m.visibleRows())
 		m.adjustScroll()
 
+	case "enter":
+		// The one key that ends the session with a path. Run prints it on
+		// stdout; the shell function turns that into a cd.
+		if m.cursor >= 0 && m.cursor < len(m.filtered) {
+			m.selected = m.filtered[m.cursor]
+			return m, tea.Quit
+		}
+
 	case "i", "tab":
 		if wt := m.selectedWorktree(); wt != nil {
 			m.mode = modeDetail
@@ -218,7 +226,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 
 	case "y":
 		if wt := m.selectedWorktree(); wt != nil {
-			m.statusMsg = infoStatus("path yanked to clipboard")
+			m.statusMsg = infoStatus(yankText(*wt))
 			return m, tea.SetClipboard(wt.Path)
 		}
 
@@ -363,12 +371,17 @@ func (m model) handleDeleteKey(key string) (tea.Model, tea.Cmd) {
 }
 
 // handleDetailKey drives the detail pane. It is a read-only view, so it
-// carries only the one action the list would have offered on the same row —
-// yank its path — plus a way out.
+// carries only the actions the list would have offered on the same row — pick
+// it or yank its path — plus a way out.
 func (m model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "ctrl+c":
 		return m, tea.Quit
+	case "enter":
+		if m.cursor >= 0 && m.cursor < len(m.filtered) {
+			m.selected = m.filtered[m.cursor]
+			return m, tea.Quit
+		}
 	case "esc", "i", "tab", "q":
 		m.mode = modeNormal
 		m.detailBranch = ""
@@ -377,11 +390,21 @@ func (m model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		m.detailLoading = false
 	case "y":
 		if wt := m.selectedWorktree(); wt != nil {
-			m.statusMsg = infoStatus("path yanked to clipboard")
+			m.statusMsg = infoStatus(yankText(*wt))
 			return m, tea.SetClipboard(wt.Path)
 		}
 	}
 	return m, nil
+}
+
+// yankText is what the status line says after `y`. The clipboard is written
+// with OSC 52, which a terminal is free to ignore — over ssh, in a tmux
+// without set-clipboard, in a handful of emulators — and reports nothing
+// back. So the message spells the path out rather than claiming the copy
+// worked: if the clipboard swallowed it, the path is still on screen to
+// select with the mouse.
+func yankText(wt internal.Worktree) string {
+	return "copied " + wt.DisplayPath
 }
 
 // --- Status-message constructors ---

@@ -56,7 +56,7 @@ func rootCmd() *cobra.Command {
 	root.SetHelpTemplate(tmpl)
 	root.SetUsageTemplate(tmpl)
 
-	root.AddCommand(newCmd(), listCmd(), removeCmd(), pathCmd(), versionCmd())
+	root.AddCommand(newCmd(), listCmd(), removeCmd(), pathCmd(), shellInitCmd(), versionCmd())
 	return root
 }
 
@@ -126,6 +126,21 @@ func pathCmd() *cobra.Command {
 	}
 }
 
+func shellInitCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "shell-init [bash|zsh|fish]",
+		Short: "Print the shell function that makes `mori` cd into the picked worktree",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			var shell string
+			if len(args) > 0 {
+				shell = args[0]
+			}
+			return commands.ShellInit(shell)
+		},
+	}
+}
+
 func versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -146,6 +161,8 @@ Usage:
   mori list [flags]             List worktrees
   mori path <branch>            Print the worktree directory for a branch
   mori remove <branch> [flags]  Remove a worktree
+  mori shell-init [shell]       Print the shell function that turns the
+                                printed path into a cd
 
 Flags (new):
   -r, --repo PATH   Repository root (default: current directory)
@@ -161,11 +178,13 @@ Global:
   version, --version  Show version
 
 TUI keys:
-  j/k, arrows   Navigate            n   New worktree
-  enter         Pick (prints path)  d   Delete worktree
-  /             Filter              s   Cycle sort
-  y             Yank path           r   Refresh
-  x / X         Archive             ?   All keybindings
-  q             Quit
+  enter         cd into worktree    n   New worktree
+  j/k, arrows   Navigate            d   Delete worktree
+  /             Filter              i   Details
+  y             Copy path           s   Cycle sort
+  x / X         Archive             r   Refresh
+  ?             All keybindings     q   Quit
+
+Add  eval "$(mori shell-init)"  to your shell rc so enter cds.
 `
 }

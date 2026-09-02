@@ -119,3 +119,72 @@ func TestSweepingRowKeepsItsWidth(t *testing.T) {
 		}
 	}
 }
+
+// enter is the whole point of the session: it names a worktree and quits, and
+// Run prints that path for the shell function to cd into.
+func TestEnterPicksTheWorktreeUnderTheCursor(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.cursor = 2
+
+	next, cmd := m.handleNormalKey("enter")
+	m = next.(model)
+
+	if cmd == nil {
+		t.Fatal("enter did not quit")
+	}
+	if m.selected != m.filtered[2] {
+		t.Fatalf("enter selected %d, want %d", m.selected, m.filtered[2])
+	}
+}
+
+// With nothing on show there is nothing to hand back, and enter must not quit
+// on an empty list — the user is one `esc` away from having a list again.
+func TestEnterOnAnEmptyListDoesNothing(t *testing.T) {
+	m := newTestModel(t, 0, 80, 24)
+
+	next, cmd := m.handleNormalKey("enter")
+	m = next.(model)
+
+	if cmd != nil {
+		t.Fatal("enter quit with nothing selected")
+	}
+	if m.selected != -1 {
+		t.Fatalf("enter selected %d on an empty list", m.selected)
+	}
+}
+
+// The detail pane offers the same pick as the row it floats over.
+func TestEnterPicksFromTheDetailPane(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.mode = modeDetail
+	m.cursor = 1
+
+	next, cmd := m.handleDetailKey("enter")
+	m = next.(model)
+
+	if cmd == nil {
+		t.Fatal("enter in the detail pane did not quit")
+	}
+	if m.selected != m.filtered[1] {
+		t.Fatalf("detail enter selected %d, want %d", m.selected, m.filtered[1])
+	}
+}
+
+// OSC 52 can be swallowed without a word, so the yank message must not claim
+// the clipboard took anything — it spells the path out instead.
+func TestYankMessageCarriesThePath(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+
+	next, _ := m.handleNormalKey("y")
+	m = next.(model)
+
+	if m.statusMsg == nil {
+		t.Fatal("y left no status message")
+	}
+	if want := m.worktrees[m.filtered[m.cursor]].DisplayPath; !strings.Contains(m.statusMsg.text, want) {
+		t.Errorf("yank message %q does not carry the path %q", m.statusMsg.text, want)
+	}
+	if strings.Contains(m.statusMsg.text, "clipboard") {
+		t.Errorf("yank message claims the clipboard worked: %q", m.statusMsg.text)
+	}
+}

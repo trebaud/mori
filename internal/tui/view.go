@@ -400,7 +400,9 @@ func (m model) renderStatusLine() string {
 func (m model) footerHints() []keyHint {
 	hints := []keyHint{}
 	if len(m.filtered) > 0 {
-		hints = append(hints, keyHint{key: "y", label: "yank path"})
+		// The primary verb leads: enter is what the whole session is for.
+		hints = append(hints, keyHint{key: "enter", label: "cd"})
+		hints = append(hints, keyHint{key: "y", label: "copy path", prio: 1})
 	}
 	hints = append(hints, keyHint{key: "n", label: "new"})
 	if len(m.filtered) > 0 {
@@ -606,7 +608,7 @@ func (m model) renderDetailCard(width int) string {
 	lines = append(lines, m.detailHistoryLines(innerW)...)
 	lines = append(lines, detailLine{"", dropPadding})
 	lines = append(lines, detailLine{" " + renderHints([]keyHint{
-		{key: "y", label: "yank path"}, {key: "esc", label: "close"},
+		{key: "enter", label: "cd"}, {key: "y", label: "copy path"}, {key: "esc", label: "close"},
 	}), dropNever})
 	lines = append(lines, detailLine{"", dropPadding})
 
@@ -748,6 +750,7 @@ var helpSections = []struct {
 	keys  [][2]string
 }{
 	{"navigation", [][2]string{
+		{"enter", "cd into the worktree and quit"},
 		{"j/k, ↑/↓", "move between worktrees"},
 		{"g / G", "jump to first / last"},
 		{"ctrl+d/u", "page down / up"},
@@ -755,7 +758,7 @@ var helpSections = []struct {
 		{"q, ctrl+c", "quit"},
 	}},
 	{"worktrees", [][2]string{
-		{"y", "yank the path to the clipboard"},
+		{"y", "copy the path to the clipboard"},
 		{"n", "create a worktree"},
 		{"d", "delete the selected worktree"},
 		{"i, tab", "inspect: path, git state, recent commits"},
