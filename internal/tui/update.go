@@ -533,9 +533,10 @@ func (m model) cancelDelete() model {
 	return m
 }
 
-// handleDetailKey drives the detail pane. It is a read-only view, so it
+// handleDetailKey drives the floating detail. It is a read-only view, so it
 // carries only the actions the list would have offered on the same row — pick
-// it or yank its path — plus a way out.
+// it or yank its path — plus the movement keys, so the card is a preview you
+// walk the list with rather than something to open and shut on every row.
 func (m model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "ctrl+c":
@@ -545,6 +546,28 @@ func (m model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			m.selected = m.filtered[m.cursor]
 			return m, tea.Quit
 		}
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+		m.adjustScroll()
+	case "down", "j":
+		if m.cursor < len(m.filtered)-1 {
+			m.cursor++
+		}
+		m.adjustScroll()
+	case "g", "home":
+		m.cursor = 0
+		m.adjustScroll()
+	case "G", "end":
+		m.cursor = max(0, len(m.filtered)-1)
+		m.adjustScroll()
+	case "ctrl+d", "pgdown":
+		m.cursor = min(m.cursor+m.visibleRows(), max(0, len(m.filtered)-1))
+		m.adjustScroll()
+	case "ctrl+u", "pgup":
+		m.cursor = max(0, m.cursor-m.visibleRows())
+		m.adjustScroll()
 	case "esc", "i", "tab", "q":
 		m.mode = modeNormal
 		m.detailBranch = ""
@@ -575,7 +598,9 @@ func yankText(wt internal.Worktree) string {
 // it is open it only schedules a debounced history load, so scrolling through
 // a long list costs one `git log`, for the row the cursor settles on.
 func (m *model) paneFollow() tea.Cmd {
-	if !m.splitView() {
+	// The floating card is the same pane on a narrower terminal, and follows
+	// the cursor the same way.
+	if !m.splitView() && m.mode != modeDetail {
 		return nil
 	}
 	wt := m.selectedWorktree()

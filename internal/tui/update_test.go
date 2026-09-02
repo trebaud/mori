@@ -615,3 +615,30 @@ func TestANewQueryMovesTheCursorToTheBestMatch(t *testing.T) {
 		t.Errorf("a new query left the cursor at %d, want the top match", m.cursor)
 	}
 }
+
+// The floating detail is a preview to walk the list with, not something to
+// open and shut on every row.
+func TestDetailCardFollowsTheCursor(t *testing.T) {
+	m := newTestModel(t, 4, 80, 24) // too narrow to split, so `i` floats it
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	m = next.(model)
+	if m.mode != modeDetail {
+		t.Fatal("i did not float the detail")
+	}
+	first := m.detailBranch
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = next.(model)
+	if m.cursor != 1 {
+		t.Fatalf("j did not move the cursor under the card: %d", m.cursor)
+	}
+	if m.mode != modeDetail {
+		t.Fatal("j closed the card")
+	}
+	if m.detailBranch == first {
+		t.Errorf("the card still describes %q after the cursor moved", first)
+	}
+	if cmd == nil {
+		t.Error("moving under the card scheduled no history load")
+	}
+}

@@ -748,7 +748,8 @@ func (m model) renderDetailCard(width int) string {
 	lines := m.detailBody(*wt, innerW)
 	lines = append(lines, detailLine{"", dropPadding})
 	lines = append(lines, detailLine{" " + renderHints([]keyHint{
-		{key: "enter", label: "cd"}, {key: "y", label: "copy path"}, {key: "esc", label: "close"},
+		{key: "enter", label: "cd"}, {key: "j/k", label: "next"},
+		{key: "y", label: "copy path"}, {key: "esc", label: "close"},
 	}), dropNever})
 	lines = append(lines, detailLine{"", dropPadding})
 
@@ -928,7 +929,7 @@ var helpSections = []struct {
 		{"n", "create a worktree"},
 		{"d", "delete the selected worktree"},
 		{"u", "restore the last deleted worktree"},
-		{"i, tab", "inspect: path, git state, recent commits"},
+		{"i, tab", "inspect, or fold the side pane away"},
 		{"r", "refresh git state now"},
 	}},
 	{"marks", [][2]string{
