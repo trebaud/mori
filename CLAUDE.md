@@ -76,5 +76,11 @@ scrolling a long list costs one query, for the row you stop on.
 uses, so labels stay over the values they name; column widths are measured on
 the labels too, so a label is never truncated by the rows beneath it.
 
+The rightmost column is the HEAD commit's subject, not its sha — every row's
+sha reads the same, and the subject is what tells two week-old branches
+apart. It absorbs whatever width the branch column did not take, so no width
+leaves a gulf in the middle of a row. `internal.List` fetches it from the same
+`git log` that already dates HEAD.
+
 **`tests/`** — Integration tests that build the binary and run it against temp
 git repos. Unit tests live next to the code they cover.

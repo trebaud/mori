@@ -34,6 +34,7 @@ type worktreeJSON struct {
 	Ahead       int    `json:"ahead"`
 	Behind      int    `json:"behind"`
 	LastCommit  string `json:"last_commit,omitempty"`
+	Subject     string `json:"subject,omitempty"`
 	Created     string `json:"created,omitempty"`
 }
 
@@ -49,6 +50,7 @@ func printJSON(worktrees []internal.Worktree) error {
 			Dirty:       wt.Dirty,
 			Ahead:       wt.Ahead,
 			Behind:      wt.Behind,
+			Subject:     wt.Subject,
 		}
 		if !wt.LastCommit.IsZero() {
 			item.LastCommit = wt.LastCommit.Format(time.RFC3339)

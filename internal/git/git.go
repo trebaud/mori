@@ -154,18 +154,26 @@ func DirtyCount(path string) int {
 	return strings.Count(trimmed, "\n") + 1
 }
 
-// LastCommit returns the timestamp of HEAD in the worktree at path.
-// The zero time is returned when there is no commit or git fails.
-func LastCommit(path string) time.Time {
-	out, err := exec.Command("git", "-C", path, "log", "-1", "--format=%ct").Output()
+// LastCommit returns the timestamp and subject of HEAD in the worktree at
+// path. The zero time and an empty subject are returned when there is no
+// commit or git fails. Both come out of one `git log`: the subject is the
+// only thing that tells two week-old branches apart at a glance, and it is
+// not worth a second process per worktree to fetch.
+func LastCommit(path string) (time.Time, string) {
+	// A unit separator, not a space: a subject may hold anything a person typed.
+	out, err := exec.Command("git", "-C", path, "log", "-1", "--format=%ct%x1f%s").Output()
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, ""
 	}
-	secs, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	fields := strings.SplitN(strings.TrimRight(string(out), "\n"), "\x1f", 2)
+	if len(fields) != 2 {
+		return time.Time{}, ""
+	}
+	secs, err := strconv.ParseInt(strings.TrimSpace(fields[0]), 10, 64)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, fields[1]
 	}
-	return time.Unix(secs, 0)
+	return time.Unix(secs, 0), fields[1]
 }
 
 // AheadBehind counts commits the worktree's HEAD is ahead of and behind the

@@ -229,16 +229,20 @@ func newRowPalette(selected bool) rowPalette {
 }
 
 // rowColumns holds the width of each column. A zero width hides the column:
-// a narrow terminal sheds HEAD first, then the ahead/behind counts, then the
-// age, rather than squeezing the branch name down to nothing.
+// a narrow terminal sheds the commit subject first, then the ahead/behind
+// counts, then the age, rather than squeezing the branch name down to nothing.
 type rowColumns struct {
-	branch, state, sync, age, head int
-	slack                          int // spare columns, held after the branch
+	branch, state, sync, age, subject int
+	slack                             int // spare columns, held after the branch
 }
 
 // minBranchWidth is the narrowest a branch column may get before the row
 // starts dropping columns to its right.
 const minBranchWidth = 18
+
+// minSubjectWidth is the least a commit subject can be given and still say
+// something. Under it the column is dropped and the row keeps the width.
+const minSubjectWidth = 24
 
 // Column labels. They are measured into the column widths alongside the
 // content, so a label never gets truncated by the rows beneath it.
@@ -246,15 +250,17 @@ const (
 	labelBranch  = "branch"
 	labelChanges = "changes"
 	labelSync    = "sync"
-	labelAge     = "age"
-	labelHead    = "head"
+	// The age is the worktree's, not the commit's — which is worth spelling
+	// out now that the column beside it carries a commit.
+	labelAge     = "created"
+	labelSubject = "last commit"
 )
 
 // fixedWidth is what every column except the branch costs, gaps included.
 func (c rowColumns) fixedWidth() int {
 	w := 0
 	for _, col := range []struct{ gap, width int }{
-		{1, c.state}, {1, c.sync}, {2, c.age}, {2, c.head},
+		{1, c.state}, {1, c.sync}, {2, c.age}, {2, c.subject},
 	} {
 		if col.width > 0 {
 			w += col.gap + col.width
@@ -266,16 +272,18 @@ func (c rowColumns) fixedWidth() int {
 // rowColumns measures the columns against every worktree on show, not just
 // the visible slice, so they stay put while the list scrolls.
 //
-// The branch takes only the width it needs. Whatever is left over is held as
-// slack directly after it, which pushes every other column against the right
-// edge as one block — so a wide terminal reads as name on the left, git state
-// on the right, rather than four columns adrift in the middle.
+// The branch takes only the width it needs. What is left over goes to the
+// commit subject, which is the column that can use it — a sentence reads
+// better long. When there is not enough left for a subject worth reading, the
+// spare columns are held as slack after the branch instead, which pushes the
+// remaining columns against the right edge as one block rather than leaving
+// them adrift in the middle.
 func (m model) rowColumns(width int) rowColumns {
 	c := rowColumns{
-		state: len(labelChanges),
-		sync:  len(labelSync),
-		age:   len(labelAge),
-		head:  len(labelHead),
+		state:   len(labelChanges),
+		sync:    len(labelSync),
+		age:     len(labelAge),
+		subject: minSubjectWidth,
 	}
 	natural := len(labelBranch)
 	for _, i := range m.filtered {
@@ -284,19 +292,25 @@ func (m model) rowColumns(width int) rowColumns {
 		c.state = max(c.state, lipgloss.Width(gitStateText(wt)))
 		c.sync = max(c.sync, lipgloss.Width(syncText(wt)))
 		c.age = max(c.age, lipgloss.Width(relativeTime(wt.Age())))
-		c.head = max(c.head, lipgloss.Width(wt.Head))
 	}
 
 	// The bar costs 2 columns and the row keeps a 1-column right margin.
 	avail := func() int { return width - 3 - c.fixedWidth() }
-	for _, drop := range []*int{&c.head, &c.sync, &c.age} {
+	for _, drop := range []*int{&c.subject, &c.sync, &c.age} {
 		if avail() >= minBranchWidth {
 			break
 		}
 		*drop = 0
 	}
 	c.branch = max(6, min(natural, avail()))
-	c.slack = max(0, avail()-c.branch)
+
+	// Hand the leftovers to the subject if it is still standing, otherwise
+	// hold them after the branch.
+	if spare := avail() - c.branch; c.subject > 0 {
+		c.subject += max(0, spare)
+	} else {
+		c.slack = max(0, spare)
+	}
 	return c
 }
 
@@ -308,7 +322,7 @@ func (m model) renderColumnHeader(c rowColumns) string {
 	row += cell(labelChanges, c.state, 1+c.slack, true, columnStyle)
 	row += cell(labelSync, c.sync, 1, true, columnStyle)
 	row += cell(labelAge, c.age, 2, true, columnStyle)
-	row += cell(labelHead, c.head, 2, false, columnStyle)
+	row += cell(labelSubject, c.subject, 2, false, columnStyle)
 	return row
 }
 
@@ -354,7 +368,7 @@ const (
 
 // renderRow draws one worktree as a row of aligned columns:
 //
-//	> feat/parser                      ● 3  ↑2   12m  a1b2c3d
+//	> feat/parser          ● 3  ↑2   12m  size the pane's columns instead of…
 //
 // One line, always. The full path lives at a fixed spot below the list, or in
 // the side pane — anywhere but here, where it used to push every row beneath
@@ -383,7 +397,7 @@ func (m model) renderRow(idx, width int, c rowColumns) string {
 	row += cell(gitStateText(wt), c.state, 1+c.slack, true, stateStyle)
 	row += cell(syncText(wt), c.sync, 1, true, p.meta)
 	row += cell(relativeTime(wt.Age()), c.age, 2, true, p.meta)
-	row += cell(wt.Head, c.head, 2, false, p.head)
+	row += cell(wt.Subject, c.subject, 2, false, p.head)
 
 	return padRight(row, width)
 }
@@ -763,7 +777,7 @@ func (m model) detailFields(wt internal.Worktree) []detailField {
 	}
 
 	fields := []detailField{
-		{labelHead, head, dropNever},
+		{"head", head, dropNever},
 		{labelChanges, changes, dropNever},
 		{labelSync, sync, dropNever},
 		{"created", since(wt.Created), dropField},

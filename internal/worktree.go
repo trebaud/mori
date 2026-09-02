@@ -26,6 +26,7 @@ type Worktree struct {
 	Ahead       int       // commits ahead of the default branch
 	Behind      int       // commits behind the default branch
 	LastCommit  time.Time // timestamp of HEAD
+	Subject     string    // subject line of HEAD
 	Created     time.Time // when the worktree was created, zero for the main tree
 }
 
@@ -79,7 +80,7 @@ func List() ([]Worktree, error) {
 		go func(w *Worktree) {
 			defer wg.Done()
 			w.Dirty = git.DirtyCount(w.Path)
-			w.LastCommit = git.LastCommit(w.Path)
+			w.LastCommit, w.Subject = git.LastCommit(w.Path)
 			w.Created = git.Created(w.Path)
 			if w.Branch != base {
 				w.Ahead, w.Behind = git.AheadBehind(w.Path, base)

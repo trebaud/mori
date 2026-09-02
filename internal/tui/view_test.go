@@ -22,6 +22,7 @@ func testWorktrees(n int) []internal.Worktree {
 			Branch:      "feat/" + strings.Repeat("x", i),
 			DisplayPath: "~/.mori/worktrees/repo/wt",
 			Head:        "bbbbbbb",
+			Subject:     "teach the parser about " + strings.Repeat("nested ", i) + "groups",
 			Dirty:       i,
 			Ahead:       i,
 			LastCommit:  time.Now().Add(-time.Duration(i) * time.Minute),
@@ -132,12 +133,12 @@ func TestRenderRowsShareWidth(t *testing.T) {
 // branch name away.
 func TestNarrowRowsShedColumns(t *testing.T) {
 	wide := newTestModel(t, 4, 120, 30).rowColumns(120)
-	if wide.head == 0 || wide.sync == 0 || wide.age == 0 {
+	if wide.subject == 0 || wide.sync == 0 || wide.age == 0 {
 		t.Fatalf("a wide terminal should keep every column: %+v", wide)
 	}
 	narrow := newTestModel(t, 4, minViewWidth, 30).rowColumns(minViewWidth)
-	if narrow.branch < minBranchWidth && narrow.head != 0 {
-		t.Errorf("narrow terminal kept HEAD while starving the branch: %+v", narrow)
+	if narrow.branch < minBranchWidth && narrow.subject != 0 {
+		t.Errorf("narrow terminal kept the subject while starving the branch: %+v", narrow)
 	}
 }
 
@@ -164,13 +165,15 @@ func TestColumnHeaderAlignsWithRows(t *testing.T) {
 		if strings.Contains(header, "…") {
 			t.Errorf("width=%d: a column label was truncated: %q", width, header)
 		}
-		// branch and head are left-aligned: their left edges line up.
+		// branch and the subject are left-aligned: their left edges line up.
 		if got, want := col(t, header, labelBranch), col(t, row, m.rowLabel(wt)); got != want {
 			t.Errorf("width=%d: branch label at column %d, value at %d", width, got, want)
 		}
-		if c.head > 0 {
-			if got, want := col(t, header, labelHead), col(t, row, wt.Head); got != want {
-				t.Errorf("width=%d: head label at column %d, value at %d", width, got, want)
+		if c.subject > 0 {
+			head := truncate(wt.Subject, c.subject)
+			head = strings.TrimSuffix(head, "…")
+			if got, want := col(t, header, labelSubject), col(t, row, head); got != want {
+				t.Errorf("width=%d: subject label at column %d, value at %d", width, got, want)
 			}
 		}
 		// changes is right-aligned: the right edges line up instead.
