@@ -34,6 +34,13 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
   when one fails it is the only account of why, and both the CLI and the TUI
   print it.
 
+The TUI is given no list to start with. `Init` asks for one, so the first
+frame — brand, chrome, a spinner — is on screen while git is still being
+queried. Every refresh beat costs several git processes per worktree, so a
+list that comes back identical doubles the interval up to `refreshMax`, a
+keypress or the terminal regaining focus puts it back to `refreshEvery`, and
+a blurred window is not polled at all.
+
 **`internal/tui/`** — Bubble Tea UI, Elm architecture, one concern per file:
 `model.go` (state, messages, layout math), `update.go` (key handling),
 `view.go` (rendering), `commands.go` (`tea.Cmd` effects), `theme.go`,

@@ -32,14 +32,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Don't refresh under an open overlay: create, creating, the delete
 		// confirmation and the detail pane all read the current list, and a
-		// reordered list under them would retarget the keys they offer.
-		if m.mode == modeNormal || m.mode == modeSearch {
-			return m, tea.Batch(tickCmd(), refreshCmd())
+		// reordered list under them would retarget the keys they offer. Don't
+		// refresh a window nobody is looking at either.
+		quiet := m.mode != modeNormal && m.mode != modeSearch
+		if quiet || !m.focused {
+			return m, tickCmd(m.refreshInterval)
 		}
-		return m, tickCmd()
+		return m, tea.Batch(tickCmd(m.refreshInterval), refreshCmd())
+
+	case tea.FocusMsg:
+		// Coming back to the window is the moment the list is most likely to
+		// be stale, and the moment the user is most likely to care.
+		m.focused = true
+		m.refreshInterval = refreshEvery
+		return m, refreshCmd()
+
+	case tea.BlurMsg:
+		m.focused = false
+		return m, nil
 
 	case refreshedMsg:
-		if msg.err == nil {
+		m.loading = false
+		if msg.err != nil {
+			m.statusMsg = errorStatus(msg.err.Error())
+		} else {
+			// A list that comes back identical earns a longer wait before the
+			// next look. Anything the user does puts the beat back to base.
+			if print := fingerprint(msg.worktrees); print == m.fingerprint {
+				m.refreshInterval = min(m.refreshInterval*2, refreshMax)
+			} else {
+				m.fingerprint = print
+				m.refreshInterval = refreshEvery
+			}
 			m.worktrees = msg.worktrees
 			m.applyFilter()
 		}
@@ -97,7 +121,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinnerTickMsg:
 		// Anything in flight spins: the create card's steps, and the status
 		// line while a refresh or a removal is running.
-		if m.mode == modeCreating || m.detailLoading || (m.statusMsg != nil && m.statusMsg.isLoading) {
+		if m.loading || m.mode == modeCreating || m.detailLoading ||
+			(m.statusMsg != nil && m.statusMsg.isLoading) {
 			m.animFrame++
 			return m, spinnerTickCmd()
 		}
@@ -173,6 +198,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// moving, filtering, sorting, archiving, unfolding the pane. Rather
 		// than remember to re-point the pane in each one, do it once here,
 		// after the key has had its say.
+		// Someone is at the keyboard, so whatever the list has settled into,
+		// look again soon rather than at the backed-off interval.
+		m.refreshInterval = refreshEvery
 		next, cmd := m.handleKey(msg)
 		return withPaneFollow(next, cmd)
 	}

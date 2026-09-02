@@ -16,9 +16,10 @@ import (
 
 // --- Effects (Elm: Cmd) ---
 
-// tickCmd schedules the next background refresh beat.
-func tickCmd() tea.Cmd {
-	return tea.Tick(refreshEvery, func(t time.Time) tea.Msg { return tickMsg(t) })
+// tickCmd schedules the next background refresh beat, at whatever interval the
+// model has backed off to.
+func tickCmd(every time.Duration) tea.Cmd {
+	return tea.Tick(every, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 // refreshCmd re-queries git off the UI goroutine.

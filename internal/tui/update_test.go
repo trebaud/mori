@@ -419,3 +419,88 @@ func TestRunningCreateTakesNoKeys(t *testing.T) {
 		t.Error("ctrl+c did not quit a running create")
 	}
 }
+
+// A list that keeps coming back the same earns a longer wait. Every beat is
+// four git processes per worktree, and a repository nobody is touching should
+// not cost that every fifteen seconds forever.
+func TestUnchangedListBacksOff(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	wts := testWorktrees(3)
+
+	next, _ := m.Update(refreshedMsg{worktrees: wts})
+	m = next.(model)
+	if m.refreshInterval != refreshEvery {
+		t.Fatalf("the first list moved the beat to %v", m.refreshInterval)
+	}
+
+	for i := 0; i < 8; i++ {
+		next, _ = m.Update(refreshedMsg{worktrees: wts})
+		m = next.(model)
+	}
+	if m.refreshInterval <= refreshEvery {
+		t.Errorf("eight identical lists left the beat at %v", m.refreshInterval)
+	}
+	if m.refreshInterval > refreshMax {
+		t.Errorf("the beat ran past its cap: %v", m.refreshInterval)
+	}
+
+	changed := testWorktrees(3)
+	changed[0].Dirty++
+	next, _ = m.Update(refreshedMsg{worktrees: changed})
+	if got := next.(model).refreshInterval; got != refreshEvery {
+		t.Errorf("a changed list left the beat at %v", got)
+	}
+}
+
+// Anything the user does means look again soon.
+func TestAKeypressResetsTheBeat(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.refreshInterval = refreshMax
+
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	if got := next.(model).refreshInterval; got != refreshEvery {
+		t.Errorf("a keypress left the beat at %v", got)
+	}
+}
+
+// An unfocused window is not polled, and regaining focus looks immediately.
+func TestBlurredWindowIsNotPolled(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+
+	next, _ := m.Update(tea.BlurMsg{})
+	m = next.(model)
+	if m.focused {
+		t.Fatal("a blur left the window focused")
+	}
+	// The tick still reschedules itself; it just does not query git. A single
+	// command back means the beat and nothing else.
+	if _, cmd := m.Update(tickMsg(time.Now())); cmd == nil {
+		t.Error("the beat stopped entirely while blurred")
+	}
+
+	next, cmd := m.Update(tea.FocusMsg{})
+	m = next.(model)
+	if !m.focused || cmd == nil {
+		t.Error("regaining focus did not look again")
+	}
+	if m.refreshInterval != refreshEvery {
+		t.Errorf("regaining focus left the beat at %v", m.refreshInterval)
+	}
+}
+
+// mori draws before it knows what to draw, and says so.
+func TestFirstFrameSaysItIsStillLooking(t *testing.T) {
+	m := newModel(nil, "~/repo", "main")
+	m.width, m.height = 80, 24
+	if !m.loading {
+		t.Fatal("a model built with no worktrees did not start out loading")
+	}
+	if out := plain(m.View().Content); !strings.Contains(out, "counting the trees") {
+		t.Errorf("the first frame does not say it is still looking:\n%s", out)
+	}
+
+	next, _ := m.Update(refreshedMsg{worktrees: testWorktrees(2)})
+	if next.(model).loading {
+		t.Error("the first list did not clear the loading state")
+	}
+}

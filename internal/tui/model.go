@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -38,8 +39,14 @@ const (
 	// the layout it can read, not all the columns it can hold.
 	maxSplitWidth = 180
 	// paneGap separates the two columns.
-	paneGap      = 2
+	paneGap = 2
+	// refreshEvery is how soon after a change mori looks again. Every beat
+	// shells out to git once per worktree, so a list that keeps coming back
+	// identical backs off — doubling to refreshMax — rather than paying that
+	// every fifteen seconds for a repository nobody is touching. Any keypress
+	// puts it back to the base, and so does the terminal regaining focus.
 	refreshEvery = 15 * time.Second
+	refreshMax   = 2 * time.Minute
 	// detailDebounce is how long the cursor must rest before the pane asks git
 	// for history. Held-down `j` should scroll a list, not fork a process per
 	// row it passes.
@@ -182,6 +189,20 @@ type model struct {
 	showArchive bool
 	showHelp    bool
 
+	// loading is true until the first list comes back. mori starts drawing
+	// before it knows what to draw: querying git for a repository with twenty
+	// worktrees takes long enough that a blank terminal would be the first
+	// thing the user saw.
+	loading bool
+	// refreshInterval is the current beat, between refreshEvery and
+	// refreshMax. fingerprint is what the last list looked like, so an
+	// unchanged one can be recognised without diffing.
+	refreshInterval time.Duration
+	fingerprint     string
+	// focused tracks terminal focus where the terminal reports it. A window
+	// nobody is looking at does not need polling.
+	focused bool
+
 	scrollOffset int // first visible card
 	deleteTarget int // index into filtered
 	// paneOpen governs the side pane on a terminal wide enough for one. It is
@@ -224,22 +245,39 @@ func newModel(worktrees []internal.Worktree, repoLabel, baseBranch string) model
 	ti.Prompt = ""
 
 	m := model{
-		worktrees:  worktrees,
-		selected:   -1,
-		repoLabel:  repoLabel,
-		baseBranch: baseBranch,
-		textInput:  ti,
-		mode:       modeNormal,
-		sortMode:   internal.SortDefault,
-		archived:   loadArchived(),
-		paneOpen:   true,
+		worktrees:       worktrees,
+		selected:        -1,
+		loading:         len(worktrees) == 0,
+		focused:         true,
+		repoLabel:       repoLabel,
+		baseBranch:      baseBranch,
+		textInput:       ti,
+		mode:            modeNormal,
+		sortMode:        internal.SortDefault,
+		archived:        loadArchived(),
+		paneOpen:        true,
+		refreshInterval: refreshEvery,
 	}
 	m.applyFilter()
 	return m
 }
 
 func (m model) Init() tea.Cmd {
-	return tickCmd()
+	// The list is asked for here rather than before the program starts, so the
+	// first frame is on screen — brand, chrome and a spinner — while git is
+	// still being queried.
+	return tea.Batch(refreshCmd(), tickCmd(refreshEvery), spinnerTickCmd())
+}
+
+// fingerprint is a cheap stand-in for the list's contents: everything the
+// display would draw differently, and nothing else.
+func fingerprint(wts []internal.Worktree) string {
+	var b strings.Builder
+	for _, wt := range wts {
+		fmt.Fprintf(&b, "%s\x1f%s\x1f%s\x1f%d\x1f%d\x1f%d\x1f%d\n",
+			wt.Branch, wt.Head, wt.Subject, wt.Dirty, wt.Ahead, wt.Behind, wt.LastCommit.Unix())
+	}
+	return b.String()
 }
 
 // --- Layout helpers ---

@@ -18,17 +18,21 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/trebaud/mori/v2/internal"
 	"github.com/trebaud/mori/v2/internal/git"
 )
 
 // Run launches the TUI and returns the path of the worktree the user picked,
 // or "" if they quit without picking one.
 //
+// It takes no list: the model asks for one in Init, so the first frame is
+// drawn while git is still being queried rather than after. Listing a
+// repository with twenty worktrees means four git processes each, and a
+// second of blank terminal is the wrong first impression.
+//
 // The UI is read from and drawn to the controlling terminal rather than to
 // stdin/stdout, so callers can print the chosen path on stdout and users can
 // write `cd "$(mori)"`.
-func Run(worktrees []internal.Worktree) (string, error) {
+func Run() (string, error) {
 	// /dev/tty is the controlling terminal regardless of how stdin and stdout
 	// are redirected; failing to open it means there is nobody to drive the UI.
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
@@ -44,7 +48,7 @@ func Run(worktrees []internal.Worktree) (string, error) {
 		return "", err
 	}
 
-	m := newModel(worktrees, repoLabel(repoRoot), git.DefaultBranch(repoRoot))
+	m := newModel(nil, repoLabel(repoRoot), git.DefaultBranch(repoRoot))
 	final, err := tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty)).Run()
 	if err != nil {
 		return "", fmt.Errorf("running TUI: %w", err)

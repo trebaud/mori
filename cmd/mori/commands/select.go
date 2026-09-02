@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/trebaud/mori/v2/internal"
 	"github.com/trebaud/mori/v2/internal/tui"
 )
 
@@ -13,12 +12,10 @@ import (
 // from `mori shell-init` turns that print into a cd; without it, `cd "$(mori)"`
 // does the same by hand.
 func Select() error {
-	worktrees, err := internal.ListLinked()
-	if err != nil {
-		return err
-	}
-
-	path, err := tui.Run(worktrees)
+	// No listing here: the TUI asks for one itself, so it can be on screen
+	// while git is still answering. A repository that turns out not to be one
+	// is caught by tui.Run before the alt screen opens.
+	path, err := tui.Run()
 	if err != nil {
 		return err
 	}

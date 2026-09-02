@@ -15,9 +15,7 @@ import (
 // always the worktree list (or the help screen); prompts float on top of it.
 func (m model) View() tea.View {
 	if m.width > 0 && (m.width < minViewWidth || m.height < minViewHeight) {
-		v := tea.NewView(m.viewTooSmall())
-		v.AltScreen = true
-		return v
+		return decorate(tea.NewView(m.viewTooSmall()))
 	}
 
 	// Below splitMinWidth this is the whole layout and it stops growing at
@@ -43,8 +41,16 @@ func (m model) View() tea.View {
 		out = overlay(base, m.renderDetailCard(width), width)
 	}
 
-	v := tea.NewView(out)
+	return decorate(tea.NewView(out))
+}
+
+// decorate sets what every frame of the UI asks of the terminal. Focus
+// reporting is the one that matters: a window nobody is looking at does not
+// need a git query every fifteen seconds. Terminals that do not report it
+// simply never send a BlurMsg, and mori keeps polling as it always did.
+func decorate(v tea.View) tea.View {
 	v.AltScreen = true
+	v.ReportFocus = true
 	return v
 }
 
@@ -184,13 +190,22 @@ func scrollHint(above, below int) string {
 func (m model) renderEmpty(width, height int) []string {
 	mark := brandStyle.Render("⁂")
 	msg, hint := "this clearing is empty", []keyHint{{key: "n", label: "plant a worktree"}}
-	if m.textInput.Value() != "" {
+	switch {
+	case m.loading:
+		// Nothing is known yet — not that there is nothing. Saying the
+		// clearing is empty before looking would be a lie half the time.
+		mark = successStyle.Render(m.spinner())
+		msg, hint = "counting the trees…", nil
+	case m.textInput.Value() != "":
 		mark = mutedStyle.Render("∅")
 		msg = "nothing grows under “" + truncate(m.textInput.Value(), max(8, width-24)) + "”"
 		hint = []keyHint{{key: "esc", label: "clear the filter"}}
 	}
 
-	block := []string{mark, "", mutedStyle.Render(msg), "", renderHints(hint)}
+	block := []string{mark, "", mutedStyle.Render(msg)}
+	if hint != nil {
+		block = append(block, "", renderHints(hint))
+	}
 
 	lines := make([]string, 0, height)
 	for i := 0; i < max(0, (height-len(block))/3); i++ {
