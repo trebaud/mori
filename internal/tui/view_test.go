@@ -539,3 +539,76 @@ func TestBehindIsColoured(t *testing.T) {
 		t.Errorf("the ahead count lost the row's style: %q", ahead)
 	}
 }
+
+// The help lists every key mori has, which is more than a short terminal has
+// rows. It must never run off the bottom: the compositor would clip the
+// border and the footer with it.
+func TestHelpFitsTheTerminal(t *testing.T) {
+	for _, width := range []int{minViewWidth, 60, 80, 100, 110, 140, 200} {
+		for _, height := range []int{minViewHeight, 14, 20, 24, 40} {
+			m := newTestModel(t, 3, width, height)
+			m.showHelp = true
+			out := m.View().Content
+			lines := strings.Split(out, "\n")
+			if len(lines) > height {
+				t.Errorf("%dx%d: help is %d lines", width, height, len(lines))
+			}
+			for i, ln := range lines {
+				if got := lipgloss.Width(ln); got > width {
+					t.Errorf("%dx%d: help line %d is %d columns: %q", width, height, i, got, plain(ln))
+				}
+			}
+		}
+	}
+}
+
+// Whatever the terminal, every key is reachable — folded into a second column
+// where there is width for one, scrolled to where there is not.
+func TestEveryKeybindingIsReachable(t *testing.T) {
+	var want []string
+	for _, s := range helpSections {
+		for _, kv := range s.keys {
+			want = append(want, kv[1])
+		}
+	}
+
+	for _, size := range [][2]int{{80, 14}, {80, 24}, {110, 24}, {200, 40}} {
+		m := newTestModel(t, 3, size[0], size[1])
+		m.showHelp = true
+
+		seen := map[string]bool{}
+		for i := 0; i < 40; i++ {
+			for _, ln := range strings.Split(plain(m.View().Content), "\n") {
+				for _, d := range want {
+					if strings.Contains(ln, d) {
+						seen[d] = true
+					}
+				}
+			}
+			next, _ := m.handleNormalKey("j")
+			m = next.(model)
+		}
+		for _, d := range want {
+			if !seen[d] {
+				t.Errorf("%dx%d: %q is never reachable", size[0], size[1], d)
+			}
+		}
+	}
+}
+
+// The scroll hint appears exactly when there is something to scroll to.
+func TestHelpScrollHintTracksTheOverflow(t *testing.T) {
+	tall := newTestModel(t, 3, 200, 50)
+	tall.showHelp = true
+	if _, more := tall.helpBody(); more {
+		t.Error("a terminal with room to spare offered a scroll")
+	}
+	short := newTestModel(t, 3, 80, 14)
+	short.showHelp = true
+	if _, more := short.helpBody(); !more {
+		t.Error("a short terminal did not offer a scroll")
+	}
+	if !strings.Contains(plain(short.View().Content), "j/k scroll") {
+		t.Error("the scroll is not named in the footer")
+	}
+}

@@ -202,6 +202,9 @@ type model struct {
 	archived    map[string]bool
 	showArchive bool
 	showHelp    bool
+	// helpScroll is the first keybinding row on show, for terminals too short
+	// to hold the whole list even folded into columns.
+	helpScroll int
 
 	// loading is true until the first list comes back. mori starts drawing
 	// before it knows what to draw: querying git for a repository with twenty

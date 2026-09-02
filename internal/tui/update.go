@@ -303,6 +303,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		switch {
 		case m.showHelp:
 			m.showHelp = false
+			m.helpScroll = 0
 		case m.query() != "":
 			m.textInput.SetValue("")
 			m.applyFilter()
@@ -312,25 +313,51 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		}
 
 	case "up", "k":
+		// While the help is up the list is not on screen, so the movement
+		// keys drive the only thing that is.
+		if m.showHelp {
+			m.helpScroll = max(0, m.helpScroll-1)
+			return m, nil
+		}
 		if m.cursor > 0 {
 			m.cursor--
 		}
 		m.adjustScroll()
 	case "down", "j":
+		if m.showHelp {
+			m.helpScroll++
+			return m, nil
+		}
 		if m.cursor < len(m.filtered)-1 {
 			m.cursor++
 		}
 		m.adjustScroll()
 	case "g", "home":
+		if m.showHelp {
+			m.helpScroll = 0
+			return m, nil
+		}
 		m.cursor = 0
 		m.adjustScroll()
 	case "G", "end":
+		if m.showHelp {
+			m.helpScroll = len(helpLines())
+			return m, nil
+		}
 		m.cursor = max(0, len(m.filtered)-1)
 		m.adjustScroll()
 	case "ctrl+d", "pgdown":
+		if m.showHelp {
+			m.helpScroll += m.helpRows()
+			return m, nil
+		}
 		m.cursor = min(m.cursor+m.visibleRows(), max(0, len(m.filtered)-1))
 		m.adjustScroll()
 	case "ctrl+u", "pgup":
+		if m.showHelp {
+			m.helpScroll = max(0, m.helpScroll-m.helpRows())
+			return m, nil
+		}
 		m.cursor = max(0, m.cursor-m.visibleRows())
 		m.adjustScroll()
 
@@ -449,6 +476,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 
 	case "?":
 		m.showHelp = !m.showHelp
+		m.helpScroll = 0
 	}
 	return m, nil
 }

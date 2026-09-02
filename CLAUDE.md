@@ -91,6 +91,12 @@ only *schedules* the `git log`: `detailWantedMsg` carries the cursor
 generation it was queued under and is dropped if the cursor has moved on, so
 scrolling a long list costs one query, for the row you stop on.
 
+The help screen is the one view that cannot drop anything — every key has to
+be reachable — so it folds into columns where the width allows and scrolls
+where it does not (`packColumns`, `helpBody`). Its descriptions are written to
+fit `helpColumnWidth`; a longer one is truncated rather than allowed to shove
+the column beside it out of line.
+
 `renderColumnHeader` draws the labels through the same `cell` calls a row
 uses, so labels stay over the values they name; column widths are measured on
 the labels too, so a label is never truncated by the rows beneath it.

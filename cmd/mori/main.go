@@ -180,12 +180,12 @@ Global:
   version, --version  Show version
 
 TUI keys:
-  enter         cd into worktree    n   New worktree
-  j/k, arrows   Navigate            d   Delete worktree
-  /             Filter              i   Details
-  y             Copy path           s   Cycle sort
-  x / X         Archive             r   Refresh
-  ?             All keybindings     q   Quit
+  enter         cd into worktree    n/N  New worktree (off default/selection)
+  j/k, arrows   Navigate            d/u  Delete / undo delete
+  /             Fuzzy filter        i    Details, or fold the side pane
+  y             Copy path           s    Cycle sort
+  x / X         Archive             r    Refresh
+  ?             All keybindings     q    Quit
 
 Add  eval "$(mori shell-init)"  to your shell rc so enter cds.
 `

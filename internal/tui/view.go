@@ -26,7 +26,8 @@ func (m model) View() tea.View {
 
 	base := m.viewList()
 	if m.showHelp {
-		base = m.viewHelp(width)
+		base = m.viewHelp()
+		width = m.helpWidth()
 	}
 
 	out := base
@@ -966,55 +967,154 @@ var helpSections = []struct {
 		{"j/k, ↑/↓", "move between worktrees"},
 		{"g / G", "jump to first / last"},
 		{"ctrl+d/u", "page down / up"},
-		{"esc", "back out of filter, archive, help"},
+		{"esc", "step back out one layer"},
 		{"q, ctrl+c", "quit"},
 	}},
 	{"worktrees", [][2]string{
 		{"y", "copy the path to the clipboard"},
-		{"n", "create a worktree off the default branch"},
-		{"N", "create one off the branch under the cursor"},
+		{"n", "new worktree off the default"},
+		{"N", "new worktree off the selection"},
 		{"d", "delete the selected worktree"},
-		{"u", "restore the last deleted worktree"},
-		{"i, tab", "inspect, or fold the side pane away"},
+		{"u", "restore the last one deleted"},
+		{"i, tab", "inspect, or fold the pane away"},
 		{"r", "refresh git state now"},
 	}},
 	{"marks", [][2]string{
 		{hereGlyph, "the worktree you are standing in"},
 		{"◌", "archived"},
 		{"● n", "n files with uncommitted changes"},
-		{"↑/↓ n", "commits ahead of / behind the base branch"},
+		{"↑/↓ n", "ahead of / behind the base"},
 	}},
 	{"view", [][2]string{
 		{"/", "fuzzy filter, best matches first"},
-		{"s", "cycle sort (default, recent, name)"},
+		{"s", "cycle sort: default/recent/name"},
 		{"x", "archive / unarchive"},
 		{"X", "show or hide archived worktrees"},
 		{"?", "toggle this help"},
 	}},
 }
 
-func (m model) viewHelp(width int) string {
-	w := min(64, width-4)
+// helpColumnWidth is one column of the keybinding list: the widest line it
+// can hold, plus the gap to the next column. Descriptions are written to fit
+// it, so two columns never truncate on a terminal wide enough for two.
+const helpColumnWidth = 48
 
-	var c strings.Builder
+// helpLines renders every section as one flat run of lines.
+// helpKeyWidth is the key column. The widest key is "q, ctrl+c".
+const helpKeyWidth = 12
+
+func helpLines() []string {
+	var lines []string
 	for i, section := range helpSections {
 		if i > 0 {
-			c.WriteString("\n")
+			lines = append(lines, "")
 		}
-		c.WriteString(" " + headingStyle.Render(section.title) + "\n")
+		lines = append(lines, " "+headingStyle.Render(section.title))
 		for _, kv := range section.keys {
-			pad := max(1, 14-lipgloss.Width(kv[0]))
-			c.WriteString("  " + keyStyle.Render(kv[0]) + strings.Repeat(" ", pad) +
-				mutedStyle.Render(kv[1]) + "\n")
+			pad := max(1, helpKeyWidth-lipgloss.Width(kv[0]))
+			lines = append(lines, "  "+keyStyle.Render(kv[0])+strings.Repeat(" ", pad)+
+				mutedStyle.Render(kv[1]))
 		}
+	}
+	return lines
+}
+
+// packColumns folds lines into as many columns of at most height rows as the
+// width allows. The help outgrew a short terminal as soon as it listed every
+// key, and unlike the detail pane it has nothing it can afford to drop — so it
+// goes sideways instead of being clipped.
+func packColumns(lines []string, height, width int) []string {
+	cols := 1
+	if height > 0 && len(lines) > height {
+		cols = (len(lines) + height - 1) / height
+	}
+	cols = max(1, min(cols, max(1, width/helpColumnWidth)))
+	if cols == 1 {
+		return lines
+	}
+
+	per := (len(lines) + cols - 1) / cols
+	colW := width / cols
+	out := make([]string, per)
+	for row := 0; row < per; row++ {
+		var b strings.Builder
+		for c := 0; c < cols; c++ {
+			i := c*per + row
+			cell := ""
+			if i < len(lines) {
+				cell = lines[i]
+			}
+			if c == cols-1 {
+				b.WriteString(cell)
+			} else {
+				b.WriteString(padRight(truncate(cell, colW-1), colW))
+			}
+		}
+		out[row] = strings.TrimRight(b.String(), " ")
+	}
+	return out
+}
+
+// helpChrome is what the help screen spends on everything but the keys: a
+// blank line, the top bar, another blank, the frame's two border rows, a
+// blank, and the hint row.
+const helpChrome = 7
+
+// helpWidth is what the help screen spans. It is not the list's width: the
+// list stops growing at maxContentWidth because a row reads badly stretched,
+// while two columns of keybindings read fine at a width where two columns of
+// worktree would not.
+func (m model) helpWidth() int {
+	if m.width <= 0 {
+		return 100
+	}
+	return min(m.width, maxSplitWidth)
+}
+
+// helpRows is how many rows of keybindings the terminal has room for.
+func (m model) helpRows() int {
+	height := 24
+	if m.height > 0 {
+		height = m.height
+	}
+	return max(1, height-helpChrome)
+}
+
+// helpBody is the keybinding list as it will be drawn: folded into columns if
+// the width allows, then windowed to helpScroll if it still does not fit.
+// Unlike the detail pane the help has nothing it can afford to drop, so it
+// goes sideways first and scrolls only when it must.
+func (m model) helpBody() (lines []string, more bool) {
+	rows := m.helpRows()
+	lines = packColumns(helpLines(), rows, m.helpWidth()-6)
+	if len(lines) <= rows {
+		return lines, false
+	}
+	start := min(m.helpScroll, len(lines)-rows)
+	return lines[start : start+rows], true
+}
+
+func (m model) viewHelp() string {
+	width := m.helpWidth()
+	lines, scrollable := m.helpBody()
+
+	w := min(64, width-4)
+	for _, ln := range lines {
+		w = max(w, lipgloss.Width(ln)+2)
+	}
+	w = min(w, width-4)
+
+	hints := []keyHint{{key: "?", label: "close"}, {key: "q", label: "quit"}}
+	if scrollable {
+		hints = append([]keyHint{{key: "j/k", label: "scroll"}}, hints...)
 	}
 
 	return strings.Join([]string{
 		"",
 		m.renderTopBar(width),
 		"",
-		renderFrame(c.String(), w, "keybindings"),
+		renderFrame(strings.Join(lines, "\n"), w, "keybindings"),
 		"",
-		" " + renderHints([]keyHint{{key: "?", label: "close"}, {key: "q", label: "quit"}}),
+		" " + renderHints(hints),
 	}, "\n")
 }
