@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // Load reads config from ~/.mori/settings.json (global) and {repoRoot}/.mori.json (project).
@@ -41,13 +42,21 @@ func RunPostCreateHooks(dir string, steps []Step, cb *HookCallbacks) []HookResul
 		}
 		cmd := exec.Command("sh", "-c", step.Cmd)
 		cmd.Dir = dir
-		success := cmd.Run() == nil
+		// Combined, not discarded: when `npm install` fails, the reason is in
+		// what it printed, and there is nowhere else to go looking for it.
+		out, err := cmd.CombinedOutput()
+		success := err == nil
+		output := strings.TrimRight(string(out), "\n")
+		if !success && output == "" {
+			output = err.Error()
+		}
 		if cb != nil && cb.OnComplete != nil {
-			cb.OnComplete(step.Name, success)
+			cb.OnComplete(step.Name, success, output)
 		}
 		results = append(results, HookResult{
 			Name:    step.Name,
 			Success: success,
+			Output:  output,
 		})
 	}
 	return results

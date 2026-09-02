@@ -213,7 +213,11 @@ func CreateWorktree(repoRoot, branch string, cb *HookCallbacks) (CreateResult, e
 	}
 	addErr := git.AddWorktree(repoRoot, dir, branch, baseBranch)
 	if cb != nil && cb.OnComplete != nil {
-		cb.OnComplete(branchStep, addErr == nil)
+		var out string
+		if addErr != nil {
+			out = addErr.Error()
+		}
+		cb.OnComplete(branchStep, addErr == nil, out)
 	}
 	if addErr != nil {
 		return CreateResult{}, fmt.Errorf("failed to create worktree: %w", addErr)

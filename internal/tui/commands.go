@@ -36,6 +36,7 @@ type stepStartedMsg struct{ name string }
 type stepCompletedMsg struct {
 	name    string
 	success bool
+	output  string
 }
 
 // spinnerTickMsg drives the spinner while the creating overlay is open.
@@ -68,8 +69,10 @@ func startCreateWorktreeCmd(branch string) (chan tea.Msg, tea.Cmd) {
 		defer close(ch)
 
 		cb := &internal.HookCallbacks{
-			OnStart:    func(name string) { ch <- stepStartedMsg{name: name} },
-			OnComplete: func(name string, success bool) { ch <- stepCompletedMsg{name: name, success: success} },
+			OnStart: func(name string) { ch <- stepStartedMsg{name: name} },
+			OnComplete: func(name string, success bool, output string) {
+				ch <- stepCompletedMsg{name: name, success: success, output: output}
+			},
 		}
 
 		result, err := internal.CreateWorktree(findRepoRoot(), branch, cb)

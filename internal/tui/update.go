@@ -87,6 +87,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.creatingSteps[i].state = stepSucceeded
 				} else {
 					m.creatingSteps[i].state = stepFailed
+					m.creatingSteps[i].output = msg.output
 				}
 				break
 			}
@@ -103,20 +104,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case worktreeCreatedMsg:
-		m.mode = modeNormal
 		m.creatingChan = nil
+		// Something went wrong: the card stays up, holding what the failing
+		// step wrote. A four-second status line was never room enough to say
+		// why `npm install` fell over, and closing the card threw away the
+		// only place that could.
+		if msg.err != nil || len(msg.warnings) > 0 {
+			m.creatingDone = true
+			if msg.err != nil {
+				m.statusMsg = errorStatus("create failed: " + msg.err.Error())
+			}
+			return m, nil
+		}
+		m.mode = modeNormal
 		m.creatingSteps = nil
 		branch := m.creatingBranch
 		m.creatingBranch = ""
-		switch {
-		case msg.err != nil:
-			m.statusMsg = errorStatus("create failed: " + msg.err.Error())
-			return m, nil
-		case len(msg.warnings) > 0:
-			m.statusMsg = errorStatus("created " + branch + " (hooks failed: " + strings.Join(msg.warnings, ", ") + ")")
-		default:
-			m.statusMsg = infoStatus("created " + branch)
-		}
+		m.statusMsg = infoStatus("created " + branch)
 		m.sweepBranch = branch
 		m.sweepFrame = 0
 		return m, refreshCmd()
@@ -199,11 +203,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case modeCreate:
 		return m.handleCreateKey(msg, key)
 	case modeCreating:
-		// Creation is not cancellable mid-flight; only a hard quit gets out.
-		if key == "ctrl+c" {
-			return m, tea.Quit
-		}
-		return m, nil
+		return m.handleCreatingKey(key)
 	case modeConfirmDelete:
 		return m.handleDeleteKey(msg, key)
 	case modeDetail:
@@ -434,6 +434,33 @@ func (m model) handleCreateKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 // yanks a path one mode over, and a hand that reaches for it out of habit
 // must not be the thing that removes a worktree. A clean one goes on enter;
 // a dirty one goes only once its branch name has been typed out in full.
+// handleCreatingKey drives the create card. While the steps are running it
+// takes nothing but a hard quit — a half-made worktree is worse than a slow
+// one. Once something has failed the card is a report, and any of the usual
+// ways out dismisses it.
+func (m model) handleCreatingKey(key string) (tea.Model, tea.Cmd) {
+	if key == "ctrl+c" {
+		return m, tea.Quit
+	}
+	if !m.creatingDone {
+		return m, nil
+	}
+	switch key {
+	case "esc", "enter", "q":
+		branch := m.creatingBranch
+		m.mode = modeNormal
+		m.creatingDone = false
+		m.creatingSteps = nil
+		m.creatingBranch = ""
+		// The worktree may well be there even though a hook was not: git ran
+		// first. Point the caret at it if the refresh finds it.
+		m.sweepBranch = branch
+		m.sweepFrame = 0
+		return m, refreshCmd()
+	}
+	return m, nil
+}
+
 func (m model) handleDeleteKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "ctrl+c":

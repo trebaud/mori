@@ -89,6 +89,9 @@ type creatingStep struct {
 	name  string
 	cmd   string
 	state stepState
+	// output is what the step wrote. Only kept for a step that failed, where
+	// it is the whole reason the card is still on screen.
+	output string
 }
 
 // --- Messages (Elm: Msg) ---
@@ -120,6 +123,9 @@ type worktreeCreatedMsg struct {
 	err      error
 	warnings []string
 }
+
+// creatingDone marks a create that has finished but whose card is still up
+// because something went wrong and the card is holding the output.
 
 type worktreeRemovedMsg struct {
 	err error
@@ -207,6 +213,9 @@ type model struct {
 	creatingBranch string
 	creatingSteps  []creatingStep
 	creatingChan   chan tea.Msg
+	// creatingDone holds the card open after a failed create so the output is
+	// readable. A create that went fine closes on its own.
+	creatingDone bool
 }
 
 func newModel(worktrees []internal.Worktree, repoLabel, baseBranch string) model {

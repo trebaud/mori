@@ -543,6 +543,10 @@ func (m model) spinner() string {
 	return spinnerFrames[m.animFrame%len(spinnerFrames)]
 }
 
+// failedStepOutputLines is how much of a failing step's output the card
+// shows. The tail, not the head: a build log says what went wrong last.
+const failedStepOutputLines = 8
+
 func (m model) renderCreatingCard(width int) string {
 	w := cardWidth(width, 88)
 	cmdW := w - 6
@@ -569,10 +573,46 @@ func (m model) renderCreatingCard(width int) string {
 		}
 		c.WriteString(" " + glyph + " " + nameStyle.Render(step.name) + "\n")
 		c.WriteString("   " + dimStyle.Render(truncate(step.cmd, cmdW)) + "\n")
+		for _, ln := range tailLines(step.output, m.outputBudget()) {
+			c.WriteString("   " + mutedStyle.Render(truncate(ln, cmdW)) + "\n")
+		}
 	}
 	c.WriteString("\n")
 
+	// While the steps run there is no way out but ctrl+c, so the card says
+	// nothing. Once one has failed the card is a report, and it says how to
+	// put it down.
+	if m.creatingDone {
+		c.WriteString(" " + renderHints([]keyHint{{key: "esc", label: "dismiss"}}) + "\n")
+	}
+
 	return renderFrame(c.String(), w, "new worktree")
+}
+
+// outputBudget is how many lines of a failed step the card can afford. The
+// compositor clips whatever hangs past the bottom of the terminal, border and
+// all, so the card sizes its one growable part rather than trusting the room
+// is there.
+func (m model) outputBudget() int {
+	if m.height <= 0 {
+		return failedStepOutputLines
+	}
+	// The card's fixed parts: two border rows, the heading and the blank
+	// lines around it, the dismiss row, and two lines per step.
+	spare := m.height - 8 - 2*len(m.creatingSteps)
+	return min(failedStepOutputLines, max(2, spare))
+}
+
+// tailLines is the last n lines of s, or none when s is empty.
+func tailLines(s string, n int) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines
 }
 
 func (m model) renderDeleteCard(width int) string {

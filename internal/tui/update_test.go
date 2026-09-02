@@ -357,3 +357,65 @@ func TestDetailKeyTogglesThePaneWhenThereIsOne(t *testing.T) {
 		t.Error("a narrow terminal did not float the detail")
 	}
 }
+
+// A hook that fails holds the card open with what it wrote. The four-second
+// status line it used to get was never room to say why npm fell over.
+func TestFailedHookHoldsTheCardOpen(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.mode = modeCreating
+	m.creatingBranch = "feat/new"
+	m.creatingSteps = []creatingStep{
+		{name: "Creating branch from main", cmd: "git worktree add …", state: stepSucceeded},
+		{name: "install deps", cmd: "npm install", state: stepRunning},
+	}
+
+	next, _ := m.Update(stepCompletedMsg{
+		name: "install deps", success: false, output: "npm ERR! code ELOCKVERIFY\nnpm ERR! stale lockfile",
+	})
+	m = next.(model)
+	if got := m.creatingSteps[1].output; !strings.Contains(got, "ELOCKVERIFY") {
+		t.Fatalf("the failed step kept no output: %q", got)
+	}
+
+	next, _ = m.Update(worktreeCreatedMsg{warnings: []string{"install deps"}})
+	m = next.(model)
+	if m.mode != modeCreating || !m.creatingDone {
+		t.Fatalf("the card closed over a failed hook: mode=%v done=%v", m.mode, m.creatingDone)
+	}
+	if card := plain(m.renderCreatingCard(80)); !strings.Contains(card, "stale lockfile") {
+		t.Errorf("the card does not show what the step wrote:\n%s", card)
+	}
+
+	after, cmd := m.handleCreatingKey("esc")
+	if cmd == nil {
+		t.Error("dismissing the card did not refresh the list")
+	}
+	if after.(model).mode != modeNormal {
+		t.Error("esc did not dismiss the card")
+	}
+}
+
+// A create that goes fine closes on its own — no keystroke to collect.
+func TestCleanCreateClosesItsOwnCard(t *testing.T) {
+	m := created(t, "feat/new")
+	if m.mode != modeNormal || m.creatingDone {
+		t.Fatalf("a clean create held its card open: mode=%v done=%v", m.mode, m.creatingDone)
+	}
+}
+
+// Nothing gets out of a create that is still running but a hard quit.
+func TestRunningCreateTakesNoKeys(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.mode = modeCreating
+	m.creatingSteps = []creatingStep{{name: "install deps", cmd: "npm i", state: stepRunning}}
+
+	for _, key := range []string{"esc", "enter", "q"} {
+		after, cmd := m.handleCreatingKey(key)
+		if cmd != nil || after.(model).mode != modeCreating {
+			t.Errorf("%q got out of a running create", key)
+		}
+	}
+	if _, cmd := m.handleCreatingKey("ctrl+c"); cmd == nil {
+		t.Error("ctrl+c did not quit a running create")
+	}
+}

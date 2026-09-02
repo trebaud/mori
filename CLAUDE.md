@@ -30,7 +30,9 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
   gitlink. A `.mori-repo` marker disambiguates same-named repositories.
 - `git/git.go` — thin wrappers around the git CLI. Nothing else shells out to git.
 - `config.go` / `config_loader.go` — post-create hooks from `.mori.json` or
-  `~/.mori/settings.json`.
+  `~/.mori/settings.json`. A hook's combined output is kept, not discarded:
+  when one fails it is the only account of why, and both the CLI and the TUI
+  print it.
 
 **`internal/tui/`** — Bubble Tea UI, Elm architecture, one concern per file:
 `model.go` (state, messages, layout math), `update.go` (key handling),

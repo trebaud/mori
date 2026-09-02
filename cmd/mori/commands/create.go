@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/trebaud/mori/v2/internal"
@@ -39,10 +40,17 @@ func Create(opts CreateOptions) error {
 		OnStart: func(name string) {
 			spin = startSpinner(name)
 		},
-		OnComplete: func(name string, success bool) {
+		OnComplete: func(name string, success bool, output string) {
 			if spin != nil {
 				spin.finish(success)
 				spin = nil
+			}
+			// A step that failed says why. Indented under its own name, so a
+			// long build log still reads as belonging to that step.
+			if !success && output != "" {
+				for _, ln := range strings.Split(output, "\n") {
+					fmt.Fprintf(progress, "      \033[0;90m%s\033[0m\n", ln)
+				}
 			}
 		},
 	}
