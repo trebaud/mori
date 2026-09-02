@@ -788,3 +788,56 @@ func TestWheelMovesTheCursor(t *testing.T) {
 		t.Errorf("a notch back up left the cursor at %d", got)
 	}
 }
+
+// Drawing before the list arrives means keys can arrive before it too. They
+// are held and replayed, not dropped: `mori` followed straight away by `G`
+// then enter must land on the last worktree, not the first.
+func TestKeysTypedDuringTheFirstLoadAreReplayed(t *testing.T) {
+	m := newModel(nil, "~/repo", "main")
+	m.width, m.height = 80, 24
+	if !m.loading {
+		t.Fatal("the model did not start out loading")
+	}
+
+	for _, key := range []tea.KeyPressMsg{
+		{Code: 'j', Text: "j"}, {Code: 'j', Text: "j"},
+	} {
+		next, cmd := m.Update(key)
+		m = next.(model)
+		if cmd != nil {
+			t.Error("a key during the load did something")
+		}
+	}
+	if len(m.pendingKeys) != 2 {
+		t.Fatalf("held %d keys, want 2", len(m.pendingKeys))
+	}
+	if m.cursor != 0 {
+		t.Fatalf("a held key moved the cursor to %d", m.cursor)
+	}
+
+	next, _ := m.Update(refreshedMsg{worktrees: testWorktrees(4)})
+	m = next.(model)
+	if len(m.pendingKeys) != 0 {
+		t.Error("the queue survived the replay")
+	}
+	if m.cursor != 2 {
+		t.Errorf("the replayed keys left the cursor at %d, want 2", m.cursor)
+	}
+}
+
+// Quitting is the exception: it must not wait for a list it is not going to
+// look at.
+func TestQuitDuringTheFirstLoadIsImmediate(t *testing.T) {
+	m := newModel(nil, "~/repo", "main")
+	m.width, m.height = 80, 24
+
+	for _, key := range []tea.KeyPressMsg{{Code: 'q', Text: "q"}} {
+		next, cmd := m.Update(key)
+		if cmd == nil {
+			t.Error("q waited for the list")
+		}
+		if len(next.(model).pendingKeys) != 0 {
+			t.Error("q was queued instead of acted on")
+		}
+	}
+}

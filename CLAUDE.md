@@ -36,7 +36,9 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
 
 The TUI is given no list to start with. `Init` asks for one, so the first
 frame — brand, chrome, a spinner — is on screen while git is still being
-queried. Every refresh beat costs several git processes per worktree, so a
+queried. Keys typed in that window are held in `pendingKeys` and replayed
+when the list lands, since drawing early is worthless if it also means
+swallowing what the user types at the frame it bought. Every refresh beat costs several git processes per worktree, so a
 list that comes back identical doubles the interval up to `refreshMax`, a
 keypress or the terminal regaining focus puts it back to `refreshEvery`, and
 a blurred window is not polled at all.

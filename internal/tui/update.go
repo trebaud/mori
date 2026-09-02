@@ -68,7 +68,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyFilter()
 		}
 		if m.sweepBranch == "" {
-			return withPaneFollow(m, nil)
+			next, cmd := m.replayPending()
+			return withPaneFollow(next, cmd)
 		}
 		// A sweep is clocked from the refresh that first carries its row, not
 		// from the create that asked for one: querying git takes long enough
@@ -217,17 +218,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return withPaneFollow(m, nil)
 
 	case tea.KeyPressMsg:
+		// Someone is at the keyboard, so whatever the list has settled into,
+		// look again soon rather than at the backed-off interval.
+		m.refreshInterval = refreshEvery
+		// Drawing before the list arrives means keys can arrive before it
+		// too. A terminal buffers what you type while a program starts; so
+		// does mori, or `mori` followed straight away by `j` would silently
+		// do nothing on exactly the repositories the early frame was for.
+		if key := msg.String(); m.loading && key != "q" && key != "ctrl+c" {
+			m.pendingKeys = append(m.pendingKeys, msg)
+			return m, nil
+		}
 		// Almost every key can land the cursor on a different worktree —
 		// moving, filtering, sorting, archiving, unfolding the pane. Rather
 		// than remember to re-point the pane in each one, do it once here,
 		// after the key has had its say.
-		// Someone is at the keyboard, so whatever the list has settled into,
-		// look again soon rather than at the backed-off interval.
-		m.refreshInterval = refreshEvery
 		next, cmd := m.handleKey(msg)
 		return withPaneFollow(next, cmd)
 	}
 	return m, nil
+}
+
+// replayPending feeds back the keys that arrived while the first list was
+// still out, in the order they were typed. Nothing joins the queue once
+// loading is over, so this does not recurse.
+func (m model) replayPending() (model, tea.Cmd) {
+	if len(m.pendingKeys) == 0 {
+		return m, nil
+	}
+	keys := m.pendingKeys
+	m.pendingKeys = nil
+
+	var cmds []tea.Cmd
+	for _, key := range keys {
+		next, cmd := m.handleKey(key)
+		m = next.(model)
+		cmds = append(cmds, cmd)
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // withPaneFollow re-points the side pane at whatever the cursor now sits on,

@@ -216,6 +216,9 @@ type model struct {
 	// focused tracks terminal focus where the terminal reports it. A window
 	// nobody is looking at does not need polling.
 	focused bool
+	// pendingKeys holds what was typed before the first list arrived, to be
+	// replayed once there is a list for it to act on.
+	pendingKeys []tea.KeyPressMsg
 
 	scrollOffset int // first visible card
 	deleteTarget int // index into filtered
