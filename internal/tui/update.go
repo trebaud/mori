@@ -193,6 +193,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sweepFrame = 0
 		return m, refreshCmd()
 
+	case tea.MouseClickMsg:
+		// A click puts the cursor on the row under it. Nothing more: a click
+		// that also picked the worktree and quit would be one twitch away
+		// from ending the session by accident.
+		if idx := m.rowAt(msg.Y); idx >= 0 {
+			m.cursor = idx
+			m.adjustScroll()
+			return withPaneFollow(m, nil)
+		}
+		return m, nil
+
+	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.cursor = max(0, m.cursor-wheelRows)
+		case tea.MouseWheelDown:
+			m.cursor = min(m.cursor+wheelRows, max(0, len(m.filtered)-1))
+		default:
+			return m, nil
+		}
+		m.adjustScroll()
+		return withPaneFollow(m, nil)
+
 	case tea.KeyPressMsg:
 		// Almost every key can land the cursor on a different worktree —
 		// moving, filtering, sorting, archiving, unfolding the pane. Rather

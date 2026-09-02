@@ -51,6 +51,9 @@ func (m model) View() tea.View {
 func decorate(v tea.View) tea.View {
 	v.AltScreen = true
 	v.ReportFocus = true
+	// Cell motion, not all motion: mori wants clicks and the wheel, and has
+	// nothing to do with a bare mouse move.
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 

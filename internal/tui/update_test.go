@@ -727,3 +727,64 @@ func TestEnterHoldsOnAnImpossibleName(t *testing.T) {
 		t.Error("a good name did not start a create")
 	}
 }
+
+// A click lands on the row it is over — and the line arithmetic has to match
+// what the view actually draws, so the mapping is checked against a render.
+func TestClickSelectsTheRowUnderIt(t *testing.T) {
+	m := newTestModel(t, 5, 80, 24)
+	lines := strings.Split(m.View().Content, "\n")
+
+	for i := range m.filtered {
+		y := listTopLine + i - m.scrollOffset
+		want := plain(m.renderRow(i, m.listWidth(), m.rowColumns(m.listWidth())))
+		if got := plain(lines[y]); got != want {
+			t.Fatalf("line %d is %q, not row %d %q", y, got, i, want)
+		}
+		next, _ := m.Update(tea.MouseClickMsg{X: 3, Y: y, Button: tea.MouseLeft})
+		if got := next.(model).cursor; got != i {
+			t.Errorf("a click on line %d selected row %d, want %d", y, got, i)
+		}
+	}
+}
+
+// Clicks outside the rows do nothing — the chrome is not a list.
+func TestClicksOffTheListAreIgnored(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.cursor = 1
+
+	for _, y := range []int{0, 1, 2, 3, listTopLine + 3, 22, 23} {
+		next, _ := m.Update(tea.MouseClickMsg{X: 3, Y: y, Button: tea.MouseLeft})
+		if got := next.(model).cursor; got != 1 {
+			t.Errorf("a click on line %d moved the cursor to %d", y, got)
+		}
+	}
+}
+
+// Nothing under an overlay is clickable; those lines mean something else.
+func TestClicksUnderAnOverlayAreIgnored(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.mode = modeCreate
+	if got := m.rowAt(listTopLine); got != -1 {
+		t.Errorf("a line under the create card mapped to row %d", got)
+	}
+	m.mode = modeNormal
+	m.showHelp = true
+	if got := m.rowAt(listTopLine); got != -1 {
+		t.Errorf("a line of the help screen mapped to row %d", got)
+	}
+}
+
+// The wheel moves the cursor, so the pane keeps describing what is under it.
+func TestWheelMovesTheCursor(t *testing.T) {
+	m := newTestModel(t, 20, 80, 24)
+
+	next, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = next.(model)
+	if m.cursor != wheelRows {
+		t.Errorf("a wheel notch down moved the cursor to %d, want %d", m.cursor, wheelRows)
+	}
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if got := next.(model).cursor; got != 0 {
+		t.Errorf("a notch back up left the cursor at %d", got)
+	}
+}

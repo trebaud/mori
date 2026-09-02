@@ -48,6 +48,10 @@ const (
 	// puts it back to the base, and so does the terminal regaining focus.
 	refreshEvery = 15 * time.Second
 	refreshMax   = 2 * time.Minute
+	// wheelRows is how far one notch of the wheel moves the cursor. The cursor
+	// moves rather than the viewport, so the pane keeps describing whatever is
+	// under the caret.
+	wheelRows = 3
 	// detailDebounce is how long the cursor must rest before the pane asks git
 	// for history. Held-down `j` should scroll a list, not fork a process per
 	// row it passes.
@@ -343,6 +347,25 @@ func (m model) chromeHeight() int {
 		return baseChromeHeight
 	}
 	return baseChromeHeight + 1
+}
+
+// listTopLine is where the first worktree row is drawn, counting from the top
+// of the screen: a blank line, the top bar, another blank, the column labels.
+// The mouse needs it to turn a click into a row.
+const listTopLine = 4
+
+// rowAt maps a screen line to an index into filtered, or -1 when that line is
+// not a worktree. Only the plain list is clickable — under an overlay or the
+// help screen the lines mean something else.
+func (m model) rowAt(y int) int {
+	if m.showHelp || (m.mode != modeNormal && m.mode != modeSearch) {
+		return -1
+	}
+	idx := m.scrollOffset + y - listTopLine
+	if y < listTopLine || idx >= m.scrollOffset+m.visibleRows() || idx >= len(m.filtered) {
+		return -1
+	}
+	return idx
 }
 
 // listHeight is the number of rows available for the worktree list.
