@@ -49,6 +49,7 @@ func Run() (string, error) {
 	}
 
 	m := newModel(nil, repoLabel(repoRoot), git.DefaultBranch(repoRoot))
+	m.hereRoot = git.WorktreeRoot(".")
 	final, err := tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty)).Run()
 	if err != nil {
 		return "", fmt.Errorf("running TUI: %w", err)

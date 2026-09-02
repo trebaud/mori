@@ -345,9 +345,18 @@ func (m model) renderColumnHeader(c rowColumns) string {
 	return row
 }
 
-// rowLabel is what the branch column shows for a worktree.
+// hereGlyph marks the worktree mori was launched from.
+const hereGlyph = "◆"
+
+// rowLabel is what the branch column shows for a worktree. The glyphs go in
+// front of the name rather than in the gutter, which belongs to the cursor —
+// and they are measured into the column width with everything else, so a
+// marked row still lines up.
 func (m model) rowLabel(wt internal.Worktree) string {
-	if m.archived[wt.Branch] {
+	switch {
+	case m.isHere(wt):
+		return hereGlyph + " " + wt.Label()
+	case m.archived[wt.Branch]:
 		return "◌ " + wt.Label()
 	}
 	return wt.Label()
@@ -842,7 +851,10 @@ func (m model) detailFields(wt internal.Worktree) []detailField {
 		{"created", since(wt.Created), dropField},
 		{"commit", since(wt.LastCommit), dropField},
 	}
-	if m.archived[wt.Branch] {
+	switch {
+	case m.isHere(wt):
+		fields = append(fields, detailField{"state", "you are here", dropField})
+	case m.archived[wt.Branch]:
 		fields = append(fields, detailField{"state", "archived", dropField})
 	}
 	return fields
@@ -918,6 +930,12 @@ var helpSections = []struct {
 		{"u", "restore the last deleted worktree"},
 		{"i, tab", "inspect: path, git state, recent commits"},
 		{"r", "refresh git state now"},
+	}},
+	{"marks", [][2]string{
+		{hereGlyph, "the worktree you are standing in"},
+		{"◌", "archived"},
+		{"● n", "n files with uncommitted changes"},
+		{"↑/↓ n", "commits ahead of / behind the base branch"},
 	}},
 	{"view", [][2]string{
 		{"/", "fuzzy filter, best matches first"},

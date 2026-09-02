@@ -474,3 +474,42 @@ func TestBothLayoutsFillTheListHeight(t *testing.T) {
 		}
 	}
 }
+
+// The worktree you launched from is marked: knowing where you already are is
+// half of deciding where to go.
+func TestTheCurrentWorktreeIsMarked(t *testing.T) {
+	m := newTestModel(t, 3, 80, 30)
+	here := m.worktrees[m.filtered[1]]
+	m.hereRoot = here.Path
+	// The fixture shares one path across every worktree, so give this one its own.
+	m.worktrees[m.filtered[1]].Path = here.Path + "/here"
+	m.hereRoot = here.Path + "/here"
+
+	if got := m.rowLabel(m.worktrees[m.filtered[1]]); !strings.HasPrefix(got, hereGlyph) {
+		t.Errorf("the current worktree is unmarked: %q", got)
+	}
+	if got := m.rowLabel(m.worktrees[m.filtered[0]]); strings.HasPrefix(got, hereGlyph) {
+		t.Errorf("another worktree wears the mark: %q", got)
+	}
+
+	var state string
+	for _, f := range m.detailFields(m.worktrees[m.filtered[1]]) {
+		if f.label == "state" {
+			state = f.value
+		}
+	}
+	if state != "you are here" {
+		t.Errorf("the detail says %q, want %q", state, "you are here")
+	}
+}
+
+// With no current worktree — mori launched from the main working tree, which
+// the list does not carry — nothing is marked.
+func TestNoMarkWithoutACurrentWorktree(t *testing.T) {
+	m := newTestModel(t, 3, 80, 30)
+	for _, i := range m.filtered {
+		if strings.HasPrefix(m.rowLabel(m.worktrees[i]), hereGlyph) {
+			t.Errorf("a row is marked with no current worktree set")
+		}
+	}
+}

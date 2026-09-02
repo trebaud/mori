@@ -71,6 +71,23 @@ func defaultBranchUncached(repo string) string {
 	return "main"
 }
 
+// WorktreeRoot returns the root of the working tree containing path, or "".
+// Which worktree you are standing in is a fact about the directory, not the
+// branch: a detached worktree has no branch to compare, and two worktrees can
+// briefly share a name during a rename.
+func WorktreeRoot(path string) string {
+	out, err := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	root := strings.TrimSpace(string(out))
+	// git reports resolved paths, so resolve ours before anything compares them.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		return resolved
+	}
+	return root
+}
+
 // CurrentBranch returns the branch name for the working directory.
 func CurrentBranch() string {
 	out, err := exec.Command("git", "branch", "--show-current").Output()

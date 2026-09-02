@@ -177,8 +177,13 @@ type model struct {
 	// second way out, for when you want the path somewhere else.
 	selected int
 
-	repoLabel     string
-	baseBranch    string
+	repoLabel  string
+	baseBranch string
+	// hereRoot is the worktree mori was launched from, or "" when that is the
+	// main working tree (which the list does not carry) or unknown. The row
+	// for it is marked: knowing where you already are is half of deciding
+	// where to go.
+	hereRoot      string
 	width, height int
 
 	mode      inputMode
@@ -506,6 +511,11 @@ func (m *model) focusBranch(branch string) bool {
 		}
 	}
 	return false
+}
+
+// isHere reports whether wt is the worktree mori was launched from.
+func (m model) isHere(wt internal.Worktree) bool {
+	return m.hereRoot != "" && wt.Path == m.hereRoot
 }
 
 // dirtyCount is how many visible worktrees have uncommitted changes.
