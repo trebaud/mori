@@ -120,7 +120,11 @@ func (m model) renderSelectedPath(width int) string {
 	if wt == nil {
 		return ""
 	}
-	return " " + pathStyle.Render(truncate(wt.DisplayPath, max(0, width-2)))
+	path := truncate(wt.DisplayPath, max(0, width-2))
+	// A query that hit the path and not the branch left the row with nothing
+	// lit at all, which read as a filter that had stopped working. Mark it
+	// here, where the path actually is.
+	return " " + highlightQuery(path, m.query(), pathStyle, markMatch(pathStyle))
 }
 
 // brand is the wordmark. The asterism is three marks in a clearing — a very
@@ -196,9 +200,9 @@ func (m model) renderEmpty(width, height int) []string {
 		// clearing is empty before looking would be a lie half the time.
 		mark = successStyle.Render(m.spinner())
 		msg, hint = "counting the trees…", nil
-	case m.textInput.Value() != "":
+	case m.query() != "":
 		mark = mutedStyle.Render("∅")
-		msg = "nothing grows under “" + truncate(m.textInput.Value(), max(8, width-24)) + "”"
+		msg = "nothing grows under “" + truncate(m.query(), max(8, width-24)) + "”"
 		hint = []keyHint{{key: "esc", label: "clear the filter"}}
 	}
 
@@ -399,7 +403,7 @@ func (m model) renderRow(idx, width int, c rowColumns) string {
 	}
 
 	label := truncate(m.rowLabel(wt), c.branch)
-	name := highlightMatch(label, strings.TrimSpace(m.textInput.Value()), p.name, p.nameMatch)
+	name := highlightQuery(label, m.query(), p.name, p.nameMatch)
 	if m.sweepBranch != "" && wt.Branch == m.sweepBranch {
 		name = renderSweep(label, m.sweepFrame, p.name)
 	}
@@ -483,7 +487,7 @@ func (m model) footerHints() []keyHint {
 	if m.undo != nil {
 		hints = append(hints, keyHint{key: "u", label: "undo delete", prio: 1})
 	}
-	if m.textInput.Value() != "" {
+	if m.query() != "" {
 		hints = append(hints, keyHint{key: "esc", label: "clear filter"})
 	} else if len(m.filtered) > 0 {
 		hints = append(hints, keyHint{key: "/", label: "filter", prio: 2})
@@ -707,7 +711,7 @@ func (m model) detailBody(wt internal.Worktree, innerW int) []detailLine {
 	lines := []detailLine{
 		{"", dropPadding},
 		{" " + selectedStyle.Render(truncate(wt.Label(), innerW)), dropNever},
-		{" " + pathStyle.Render(truncate(wt.DisplayPath, innerW)), dropNever},
+		{" " + highlightQuery(truncate(wt.DisplayPath, innerW), m.query(), pathStyle, markMatch(pathStyle)), dropNever},
 		{"", dropPadding},
 	}
 	for _, f := range m.detailFields(wt) {
@@ -916,7 +920,7 @@ var helpSections = []struct {
 		{"r", "refresh git state now"},
 	}},
 	{"view", [][2]string{
-		{"/", "filter by branch or path"},
+		{"/", "fuzzy filter, best matches first"},
 		{"s", "cycle sort (default, recent, name)"},
 		{"x", "archive / unarchive"},
 		{"X", "show or hide archived worktrees"},

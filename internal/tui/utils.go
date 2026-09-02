@@ -78,22 +78,120 @@ func center(s string, width int) string {
 	return strings.Repeat(" ", max(0, (width-lipgloss.Width(s))/2)) + s
 }
 
-// highlightMatch renders s in base, with the first case-insensitive run of
-// query drawn in match. The match style underlines as well as colors, so the
-// hit is still visible with color stripped or on a monochrome terminal.
+// --- Fuzzy matching ---
 //
-// s must already be truncated: a hit cut off by truncation simply highlights
-// the part that survived.
-func highlightMatch(s, query string, base, match lipgloss.Style) string {
+// A filter is a guess at a name half-remembered, so `parse` should find
+// `feat/parser` and `fp` should find it too. The matcher takes the query's
+// runes in order but not necessarily together, and scores what it finds so
+// the list can put the likeliest first.
+
+// Scoring weights. A run of adjacent matches is what makes a hit feel like
+// the right one, so it counts for far more than a scattering of the same
+// letters; a hit that starts a word counts for more than one in the middle;
+// and every rune skipped along the way costs.
+const (
+	scoreAdjacent = 10
+	scoreBoundary = 8
+	scoreLeading  = 4
+	penaltyGap    = 1
+)
+
+// isBoundary reports whether the rune at index i in runes starts a word.
+// Branch names are punctuated with these, which is what makes `fp` a
+// reasonable way to ask for `feat/parser`.
+func isBoundary(runes []rune, i int) bool {
+	if i == 0 {
+		return true
+	}
+	switch runes[i-1] {
+	case '/', '-', '_', '.', ' ':
+		return true
+	}
+	return false
+}
+
+// fuzzyMatch finds query's runes in s, in order, case-insensitively. It
+// returns the index of every matched rune and a score, or ok=false when the
+// query is not there at all. An empty query matches everything, scoring zero.
+//
+// The scan is greedy — the first place each rune fits — which can miss the
+// prettiest alignment of a query against a long name, but it is one pass and
+// this runs on every keystroke against every worktree.
+func fuzzyMatch(s, query string) (positions []int, score int, ok bool) {
 	if query == "" {
+		return nil, 0, true
+	}
+	hay, needle := []rune(strings.ToLower(s)), []rune(strings.ToLower(query))
+
+	prev := -2
+	q := 0
+	for i := 0; i < len(hay) && q < len(needle); i++ {
+		if hay[i] != needle[q] {
+			continue
+		}
+		switch {
+		case i == prev+1:
+			score += scoreAdjacent
+		case isBoundary(hay, i):
+			score += scoreBoundary
+		}
+		if i < 4 {
+			score += scoreLeading - i
+		}
+		score -= penaltyGap * max(0, i-prev-1)
+		positions = append(positions, i)
+		prev = i
+		q++
+	}
+	if q < len(needle) {
+		return nil, 0, false
+	}
+	return positions, score, true
+}
+
+// highlightRunes renders s in base with the runes at the given indices drawn
+// in match. The match style underlines as well as colors, so the hit is still
+// visible with color stripped or on a monochrome terminal.
+//
+// s must already be truncated, and the indices are into it: a hit cut off by
+// truncation simply highlights the part that survived.
+func highlightRunes(s string, positions []int, base, match lipgloss.Style) string {
+	if len(positions) == 0 {
 		return base.Render(s)
 	}
-	i := strings.Index(strings.ToLower(s), strings.ToLower(query))
-	if i < 0 {
+	hit := make(map[int]bool, len(positions))
+	for _, i := range positions {
+		hit[i] = true
+	}
+
+	// Runs, not runes: one style span per stretch keeps the escape sequences
+	// down and lets a multi-rune hit underline as one mark.
+	var b strings.Builder
+	runes := []rune(s)
+	for i := 0; i < len(runes); {
+		j := i
+		for j < len(runes) && hit[j] == hit[i] {
+			j++
+		}
+		st := base
+		if hit[i] {
+			st = match
+		}
+		b.WriteString(st.Render(string(runes[i:j])))
+		i = j
+	}
+	return b.String()
+}
+
+// highlightQuery is highlightRunes over a fresh match, for text that was not
+// what the filter was scored against — a path under a query that matched the
+// branch, say, where there may be nothing to mark at all.
+func highlightQuery(s, query string, base, match lipgloss.Style) string {
+	positions, _, ok := fuzzyMatch(s, query)
+	if !ok {
 		return base.Render(s)
 	}
-	end := i + len(query)
-	return base.Render(s[:i]) + match.Render(s[i:end]) + base.Render(s[end:])
+	return highlightRunes(s, positions, base, match)
 }
 
 // cell renders one column of a list row: gap columns of padding, then text

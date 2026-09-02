@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -184,7 +185,11 @@ type model struct {
 	textInput textinput.Model
 	statusMsg *statusMsg
 
-	sortMode    internal.SortMode
+	sortMode internal.SortMode
+	// lastQuery is the filter the current ordering was built for. A query
+	// that has not changed leaves the cursor on its worktree; a new one puts
+	// it on the best match.
+	lastQuery   string
 	archived    map[string]bool
 	showArchive bool
 	showHelp    bool
@@ -411,26 +416,79 @@ func (m model) selectedWorktree() *internal.Worktree {
 	return nil
 }
 
+// query is the active filter, trimmed. The text input is shared with the
+// create and delete cards, so what it holds is only a filter while the list
+// is the thing on screen.
+func (m model) query() string {
+	if m.mode != modeNormal && m.mode != modeSearch {
+		return ""
+	}
+	return strings.TrimSpace(m.textInput.Value())
+}
+
 // applyFilter rebuilds the visible index list from the archive state, the
 // search query, and the active sort mode.
+//
+// A query ranks as well as filters: fuzzy hits are ordered best-first, which
+// is the whole point of typing one, and the chosen sort mode goes back to
+// ordering the list the moment the query is cleared. A branch hit outscores
+// the same query found in a path — you are usually naming a branch.
 func (m *model) applyFilter() {
-	query := strings.ToLower(strings.TrimSpace(m.textInput.Value()))
+	query := m.query()
+	// The cursor holds its worktree across a rebuild it did not ask for — a
+	// background refresh, an archive toggle — so a reordered list never slides
+	// a different worktree under a key about to be pressed. A changed query is
+	// different: there the cursor belongs on the best match.
+	var keep string
+	changedQuery := query != m.lastQuery
+	if !changedQuery {
+		if wt := m.selectedWorktree(); wt != nil {
+			keep = wt.Label()
+		}
+	}
+	m.lastQuery = query
 
-	m.filtered = nil
+	type hit struct{ idx, score int }
+	var hits []hit
 	for i, wt := range m.worktrees {
 		if !m.showArchive && m.archived[wt.Branch] {
 			continue
 		}
-		if query != "" &&
-			!strings.Contains(strings.ToLower(wt.Label()), query) &&
-			!strings.Contains(strings.ToLower(wt.DisplayPath), query) {
+		positions, score, ok := fuzzyMatch(wt.Label(), query)
+		if ok {
+			hits = append(hits, hit{i, score + scoreBoundary*len(positions)})
 			continue
 		}
-		m.filtered = append(m.filtered, i)
+		if _, score, ok := fuzzyMatch(wt.DisplayPath, query); ok {
+			// Found, but in the path. Worth showing, not worth showing first.
+			hits = append(hits, hit{i, score - 1000})
+		}
 	}
-	internal.SortIndices(m.worktrees, m.filtered, m.sortMode)
 
-	if m.cursor >= len(m.filtered) {
+	m.filtered = m.filtered[:0]
+	for _, h := range hits {
+		m.filtered = append(m.filtered, h.idx)
+	}
+	if query == "" {
+		internal.SortIndices(m.worktrees, m.filtered, m.sortMode)
+	} else {
+		score := make(map[int]int, len(hits))
+		for _, h := range hits {
+			score[h.idx] = h.score
+		}
+		sort.SliceStable(m.filtered, func(a, b int) bool {
+			return score[m.filtered[a]] > score[m.filtered[b]]
+		})
+	}
+
+	switch {
+	case changedQuery:
+		// Every keystroke re-ranks, so the cursor belongs on the best match
+		// rather than at whatever depth it happened to be.
+		m.cursor = 0
+	case keep != "" && m.focusBranch(keep):
+		// Put back where it was.
+	case m.cursor >= len(m.filtered):
 		m.cursor = max(0, len(m.filtered)-1)
 	}
 	m.adjustScroll()

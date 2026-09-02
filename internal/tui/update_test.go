@@ -504,3 +504,114 @@ func TestFirstFrameSaysItIsStillLooking(t *testing.T) {
 		t.Error("the first list did not clear the loading state")
 	}
 }
+
+// The filter is a guess at a half-remembered name, so the runes need only
+// appear in order.
+func TestFuzzyFilterFindsScatteredRunes(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.worktrees = []internal.Worktree{
+		{Branch: "feat/parser", Path: "/a", DisplayPath: "~/a"},
+		{Branch: "chore/deps", Path: "/b", DisplayPath: "~/b"},
+		{Branch: "feature-flags", Path: "/c", DisplayPath: "~/c"},
+	}
+
+	for _, tc := range []struct{ query, want string }{
+		{"fp", "feat/parser"},     // a rune per word
+		{"parser", "feat/parser"}, // the run itself
+		{"deps", "chore/deps"},    // after the slash
+		{"featureflags", "feature-flags"},
+	} {
+		m.textInput.SetValue(tc.query)
+		m.lastQuery = "sentinel"
+		m.applyFilter()
+		if len(m.filtered) == 0 {
+			t.Errorf("%q matched nothing", tc.query)
+			continue
+		}
+		if got := m.worktrees[m.filtered[0]].Branch; got != tc.want {
+			t.Errorf("%q ranked %q first, want %q", tc.query, got, tc.want)
+		}
+	}
+
+	m.textInput.SetValue("zzz")
+	m.lastQuery = "sentinel"
+	m.applyFilter()
+	if len(m.filtered) != 0 {
+		t.Errorf("a query matching nothing kept %d worktrees", len(m.filtered))
+	}
+}
+
+// A run of adjacent runes is the hit that feels right, so it must outrank the
+// same letters scattered through a longer name.
+func TestFuzzyRankingPrefersTheTighterHit(t *testing.T) {
+	tight, _, ok := fuzzyMatch("parser", "parse")
+	if !ok {
+		t.Fatal("the exact run did not match")
+	}
+	loose, _, ok2 := fuzzyMatch("please-add-real-server-endpoint", "parse")
+	if !ok2 {
+		t.Fatal("the scattered runes did not match")
+	}
+	_, tightScore, _ := fuzzyMatch("parser", "parse")
+	_, looseScore, _ := fuzzyMatch("please-add-real-server-endpoint", "parse")
+	if tightScore <= looseScore {
+		t.Errorf("the tight hit scored %d, the loose one %d", tightScore, looseScore)
+	}
+	if len(tight) != 5 || len(loose) != 5 {
+		t.Errorf("a five-rune query matched %d and %d positions", len(tight), len(loose))
+	}
+}
+
+// A branch hit beats the same query found in a path: you are usually naming
+// a branch.
+func TestBranchHitsOutrankPathHits(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.worktrees = []internal.Worktree{
+		{Branch: "chore/deps", Path: "/a", DisplayPath: "~/work/parser/a"},
+		{Branch: "feat/parser", Path: "/b", DisplayPath: "~/b"},
+	}
+	m.textInput.SetValue("parser")
+	m.lastQuery = "sentinel"
+	m.applyFilter()
+
+	if len(m.filtered) != 2 {
+		t.Fatalf("expected both worktrees, got %d", len(m.filtered))
+	}
+	if got := m.worktrees[m.filtered[0]].Branch; got != "feat/parser" {
+		t.Errorf("the path hit ranked first: %q", got)
+	}
+}
+
+// A rebuild the cursor did not ask for — a background refresh, an archive
+// toggle — must leave it on the same worktree. Otherwise a reordered list can
+// slide a different one under a key about to be pressed.
+func TestCursorHoldsItsWorktreeAcrossARefresh(t *testing.T) {
+	m := newTestModel(t, 4, 80, 24)
+	m.sortMode = internal.SortRecent
+	m.applyFilter()
+	m.cursor = 2
+	want := m.worktrees[m.filtered[2]].Branch
+
+	// The same worktrees, reordered by a fresh commit on the last one.
+	wts := testWorktrees(4)
+	wts[3].LastCommit = time.Now().Add(time.Hour)
+	next, _ := m.Update(refreshedMsg{worktrees: wts})
+	m = next.(model)
+
+	if got := m.worktrees[m.filtered[m.cursor]].Branch; got != want {
+		t.Errorf("the refresh moved the cursor from %q to %q", want, got)
+	}
+}
+
+// Typing is different: a new query puts the cursor on the best match rather
+// than chasing whatever it was on.
+func TestANewQueryMovesTheCursorToTheBestMatch(t *testing.T) {
+	m := newTestModel(t, 4, 80, 24)
+	m.cursor = 3
+
+	m.textInput.SetValue("feat/x")
+	m.applyFilter()
+	if m.cursor != 0 {
+		t.Errorf("a new query left the cursor at %d, want the top match", m.cursor)
+	}
+}

@@ -252,7 +252,7 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		switch {
 		case m.showHelp:
 			m.showHelp = false
-		case m.textInput.Value() != "":
+		case m.query() != "":
 			m.textInput.SetValue("")
 			m.applyFilter()
 		case m.showArchive:

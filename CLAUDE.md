@@ -75,6 +75,14 @@ showed, then history oldest-first — until it fits. The compositor clips
 anything past the bottom, border included, so the pane must size itself rather
 than trust the terminal.
 
+`/` filters fuzzily: `fuzzyMatch` takes the query's runes in order but not
+necessarily together, scoring adjacency and word boundaries, and a query ranks
+the list as well as narrowing it (a branch hit outscores the same query found
+in a path). `applyFilter` resets the cursor to the best match when the query
+changes and otherwise holds it on the same *worktree*, not the same index — a
+background refresh must never slide a different worktree under a key about to
+be pressed.
+
 The pane follows the cursor through `paneFollow`, called once in `Update`
 after every key rather than in each handler that can move the selection. It
 only *schedules* the `git log`: `detailWantedMsg` carries the cursor
