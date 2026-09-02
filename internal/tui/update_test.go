@@ -683,3 +683,47 @@ func TestNFallsBackForADetachedWorktree(t *testing.T) {
 		t.Errorf("N off a detached worktree cut from %q, want %q", got, m.baseBranch)
 	}
 }
+
+// The card says what is wrong with a name while you type it, rather than
+// letting git fail a second later with the same news.
+func TestCreateCardRefusesAnImpossibleName(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	taken := m.worktrees[m.filtered[0]].Branch
+
+	for _, name := range []string{
+		"feat parser", "feat..parser", "feat/../x", "-dashed",
+		"trailing.", "ends.lock", "@", "a//b", "/leading", "trailing/",
+		"has~tilde", "has:colon", "has?q", taken,
+	} {
+		if m.branchProblem(name) == "" {
+			t.Errorf("%q was accepted", name)
+		}
+	}
+	for _, name := range []string{"", "feat/parser", "fix-123", "v2.1", "a.b/c"} {
+		if p := m.branchProblem(name); p != "" {
+			t.Errorf("%q was refused: %s", name, p)
+		}
+	}
+}
+
+// A refused name goes nowhere: enter must not start a create git will only
+// reject.
+func TestEnterHoldsOnAnImpossibleName(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	next, _ := m.handleNormalKey("n")
+	m = next.(model)
+	m.textInput.SetValue("feat parser")
+
+	after, cmd := m.handleCreateKey(tea.KeyPressMsg{}, "enter")
+	if cmd != nil || after.(model).mode != modeCreate {
+		t.Error("enter started a create on an impossible name")
+	}
+	if card := plain(m.renderCreateCard(80)); !strings.Contains(card, "no space") {
+		t.Errorf("the card does not say what is wrong:\n%s", card)
+	}
+
+	m.textInput.SetValue("feat/parser-2")
+	if _, cmd := m.handleCreateKey(tea.KeyPressMsg{}, "enter"); cmd == nil {
+		t.Error("a good name did not start a create")
+	}
+}

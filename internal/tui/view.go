@@ -558,12 +558,21 @@ func (m model) renderCreateCard(width int) string {
 	c.WriteString(" " + dimStyle.Render("branches off ") + mutedStyle.Render(base) + "\n")
 	// Wrapped, not truncated: on a narrow card this note grows a line rather
 	// than trailing off mid-sentence.
-	for _, ln := range wrapText("leave it empty and mori will name it for you", w-3) {
-		c.WriteString(" " + dimStyle.Render(ln) + "\n")
+	note, noteStyle := "leave it empty and mori will name it for you", dimStyle
+	if p := m.branchProblem(strings.TrimSpace(m.textInput.Value())); p != "" {
+		note, noteStyle = "⚠ "+p, warnStyle
+	}
+	for _, ln := range wrapText(note, w-3) {
+		c.WriteString(" " + noteStyle.Render(ln) + "\n")
 	}
 	c.WriteString("\n")
 
+	problem := m.branchProblem(strings.TrimSpace(m.textInput.Value()))
 	hints := []keyHint{{key: "enter", label: "create"}}
+	if problem != "" {
+		// Nothing to press but escape until the name is a name.
+		hints = nil
+	}
 	// The toggle is only worth naming when there is another base to toggle to.
 	if wt := m.selectedWorktree(); wt != nil && wt.Branch != "" && wt.Branch != m.baseBranch {
 		other := wt.Branch

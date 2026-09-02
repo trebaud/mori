@@ -456,6 +456,10 @@ func (m model) handleCreateKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 		return m, nil
 	case "enter":
 		branch := strings.TrimSpace(m.textInput.Value())
+		if m.branchProblem(branch) != "" {
+			// Say nothing: the card is already showing what is wrong with it.
+			return m, nil
+		}
 		if branch == "" {
 			branch = "wt-" + internal.RandomSuffix()
 		}

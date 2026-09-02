@@ -517,6 +517,57 @@ func (m *model) focusBranch(branch string) bool {
 	return false
 }
 
+// branchProblem describes what is wrong with the name being typed into the
+// create card, or "" when nothing is. An empty name is fine — mori names it.
+//
+// These are git's own rules for a ref name, checked here so the card can say
+// so while you type rather than letting `git worktree add` fail a second
+// later with the same news in a status line.
+func (m model) branchProblem(name string) string {
+	if name == "" {
+		return ""
+	}
+	for _, r := range name {
+		switch {
+		case r < ' ' || r == 0x7f:
+			return "no control characters"
+		case strings.ContainsRune(" ~^:?*[\\", r):
+			return "no space or " + "~^:?*[\\"
+		}
+	}
+	switch {
+	case strings.Contains(name, ".."):
+		return "no .."
+	case strings.Contains(name, "@{"):
+		return "no @{"
+	case strings.Contains(name, "//"):
+		return "no //"
+	case strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/"):
+		return "cannot start or end with /"
+	case strings.HasSuffix(name, "."):
+		return "cannot end with ."
+	case strings.HasSuffix(name, ".lock"):
+		return "cannot end with .lock"
+	case name == "@":
+		return "cannot be @"
+	case strings.HasPrefix(name, "-"):
+		return "cannot start with -"
+	}
+	for _, part := range strings.Split(name, "/") {
+		if strings.HasPrefix(part, ".") {
+			return "no path component may start with ."
+		}
+	}
+	// Not a ref-format rule, but the same kind of news and better here than
+	// from git a second later.
+	for _, wt := range m.worktrees {
+		if wt.Branch == name {
+			return "there is already a worktree on " + name
+		}
+	}
+	return ""
+}
+
 // isHere reports whether wt is the worktree mori was launched from.
 func (m model) isHere(wt internal.Worktree) bool {
 	return m.hereRoot != "" && wt.Path == m.hereRoot
