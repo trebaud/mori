@@ -513,3 +513,29 @@ func TestNoMarkWithoutACurrentWorktree(t *testing.T) {
 		}
 	}
 }
+
+// The styled sync column must measure exactly the same as the plain one it
+// is padded against, or the columns to its left drift row by row.
+func TestStyledSyncKeepsTheColumnWidth(t *testing.T) {
+	for _, wt := range []internal.Worktree{
+		{Ahead: 2, Behind: 4}, {Ahead: 12}, {Behind: 7}, {},
+	} {
+		text := syncText(wt)
+		styled := plain(syncStyled(wt, mutedStyle))
+		if styled != text {
+			t.Errorf("%+v: styled sync reads %q, plain reads %q", wt, styled, text)
+		}
+	}
+}
+
+// Behind is picked out of the muted run; ahead keeps the row's own style.
+func TestBehindIsColoured(t *testing.T) {
+	behind := syncStyled(internal.Worktree{Behind: 2}, mutedStyle)
+	if want := behindStyle.Render("↓2"); !strings.Contains(behind, want) {
+		t.Errorf("the behind count is not picked out: %q", behind)
+	}
+	ahead := syncStyled(internal.Worktree{Ahead: 2}, mutedStyle)
+	if want := mutedStyle.Render("↑2"); !strings.Contains(ahead, want) {
+		t.Errorf("the ahead count lost the row's style: %q", ahead)
+	}
+}

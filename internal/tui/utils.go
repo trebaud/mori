@@ -210,6 +210,21 @@ func cell(text string, w, gap int, right bool, st lipgloss.Style) string {
 	return out + st.Render(t) + pad
 }
 
+// styledCell is cell for content that carries styles of its own: text is what
+// the column is measured and padded on, rendered is what is drawn. It does
+// not truncate — the caller must have measured the column wide enough.
+func styledCell(text, rendered string, w, gap int, right bool) string {
+	if w <= 0 {
+		return ""
+	}
+	pad := strings.Repeat(" ", max(0, w-lipgloss.Width(text)))
+	out := strings.Repeat(" ", gap)
+	if right {
+		return out + pad + rendered
+	}
+	return out + rendered + pad
+}
+
 // --- Key hints ---
 
 // keyHint is one "[k] label" pair in a footer or a card's action row. prio

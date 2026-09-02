@@ -16,6 +16,7 @@ var (
 	colSuccess color.Color = lipgloss.Color("2") // green
 	colWarn    color.Color = lipgloss.Color("3") // yellow
 	colDanger  color.Color = lipgloss.Color("1") // red
+	colInfo    color.Color = lipgloss.Color("6") // cyan
 
 	colText   color.Color = lipgloss.NoColor{} // terminal default foreground
 	colMuted  color.Color = lipgloss.ANSIColor(8)
@@ -35,8 +36,9 @@ var (
 	cursorStyle   lipgloss.Style
 	pathStyle     lipgloss.Style
 
-	dirtyStyle lipgloss.Style
-	cleanStyle lipgloss.Style
+	dirtyStyle  lipgloss.Style
+	cleanStyle  lipgloss.Style
+	behindStyle lipgloss.Style
 
 	errorStyle   lipgloss.Style
 	successStyle lipgloss.Style
@@ -86,6 +88,11 @@ func ApplyTheme(isDark bool) {
 	// clean one says so as quietly as it can and still be there.
 	dirtyStyle = lipgloss.NewStyle().Foreground(colWarn)
 	cleanStyle = lipgloss.NewStyle().Foreground(colMuted).Faint(true)
+
+	// Commits behind the base branch are the one number on a row that is
+	// about someone else's work, and the one you can act on without opening
+	// the worktree at all. Ahead stays muted: that part you already know.
+	behindStyle = lipgloss.NewStyle().Foreground(colInfo)
 
 	errorStyle = lipgloss.NewStyle().Foreground(colDanger)
 	successStyle = lipgloss.NewStyle().Foreground(colSuccess)

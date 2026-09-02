@@ -390,6 +390,24 @@ func syncText(wt internal.Worktree) string {
 	return ""
 }
 
+// syncStyled draws what syncText measures, picking the behind count out of
+// the muted run around it. Being behind is the one thing on a row that is
+// about work someone else did, and the one thing you can act on without
+// opening the worktree.
+func syncStyled(wt internal.Worktree, base lipgloss.Style) string {
+	ahead := base.Render(fmt.Sprintf("↑%d", wt.Ahead))
+	behind := behindStyle.Render(fmt.Sprintf("↓%d", wt.Behind))
+	switch {
+	case wt.Ahead > 0 && wt.Behind > 0:
+		return ahead + " " + behind
+	case wt.Ahead > 0:
+		return ahead
+	case wt.Behind > 0:
+		return behind
+	}
+	return ""
+}
+
 // cursorGlyph marks the selected row, and gutterWidth is the column it and
 // the header's leading gap both reserve for it.
 const (
@@ -426,7 +444,7 @@ func (m model) renderRow(idx, width int, c rowColumns) string {
 		stateStyle = p.dirty
 	}
 	row += cell(gitStateText(wt), c.state, 1+c.slack, true, stateStyle)
-	row += cell(syncText(wt), c.sync, 1, true, p.meta)
+	row += styledCell(syncText(wt), syncStyled(wt, p.meta), c.sync, 1, true)
 	row += cell(relativeTime(wt.Age()), c.age, 2, true, p.meta)
 	row += cell(wt.Subject, c.subject, 2, false, p.head)
 
