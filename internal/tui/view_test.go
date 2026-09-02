@@ -40,48 +40,49 @@ func newTestModel(t *testing.T, n, width, height int) model {
 	return m
 }
 
-// A worktree is one line, except the selected one, which adds its path.
-func TestRenderRowHeights(t *testing.T) {
+// Every worktree is exactly one line, selected or not. A selected row that
+// grew a second line pushed everything under it down and back on every
+// keypress, and the list rippled as the cursor moved.
+func TestRenderRowIsAlwaysOneLine(t *testing.T) {
 	m := newTestModel(t, 4, 80, 30)
 	cols := m.rowColumns(80)
 	for i := range m.filtered {
-		want := rowHeight
-		if i == m.cursor {
-			want += detailHeight
-		}
-		lines := m.renderRow(i, 80, cols)
-		if len(lines) != want {
-			t.Errorf("row %d: %d lines, want %d", i, len(lines), want)
-		}
-		for _, ln := range lines {
-			if strings.Contains(ln, "\n") {
-				t.Errorf("row %d holds an embedded newline: %q", i, plain(ln))
-			}
+		if row := m.renderRow(i, 80, cols); strings.Contains(row, "\n") {
+			t.Errorf("row %d is more than one line: %q", i, plain(row))
 		}
 	}
 }
 
-// The selected worktree shows the full path it is about to hand back, and
-// only the selected one — a path under every row would bury the list.
-func TestSelectedRowShowsPath(t *testing.T) {
+// No row spells its path out; the caret alone says which one is selected.
+func TestRowsCarryNoPath(t *testing.T) {
 	m := newTestModel(t, 4, 80, 30)
 	m.cursor = 2
 	cols := m.rowColumns(80)
 
-	selected := plain(strings.Join(m.renderRow(2, 80, cols), "\n"))
-	if want := m.worktrees[m.filtered[2]].DisplayPath; !strings.Contains(selected, want) {
-		t.Errorf("selected row is missing its path %q:\n%s", want, selected)
-	}
+	selected := plain(m.renderRow(2, 80, cols))
 	if !strings.HasPrefix(selected, cursorGlyph) {
 		t.Errorf("selected row does not start with the cursor: %q", selected)
 	}
-
-	other := plain(strings.Join(m.renderRow(0, 80, cols), "\n"))
-	if strings.Contains(other, m.worktrees[m.filtered[0]].DisplayPath) {
-		t.Errorf("unselected row spelled out its path: %q", other)
+	for _, i := range []int{0, 2} {
+		row := plain(m.renderRow(i, 80, cols))
+		if want := m.worktrees[m.filtered[i]].DisplayPath; strings.Contains(row, want) {
+			t.Errorf("row %d spelled out its path: %q", i, row)
+		}
 	}
-	if strings.Contains(other, cursorGlyph) {
-		t.Errorf("unselected row drew a cursor: %q", other)
+	if strings.Contains(plain(m.renderRow(0, 80, cols)), cursorGlyph) {
+		t.Errorf("unselected row drew a cursor")
+	}
+}
+
+// The path moved out of the list, but it did not leave: the one-column layout
+// keeps it at a fixed row of its own.
+func TestSelectedPathSitsBelowTheList(t *testing.T) {
+	m := newTestModel(t, 4, 80, 30)
+	m.cursor = 2
+
+	line := plain(m.renderSelectedPath(80))
+	if want := m.worktrees[m.filtered[2]].DisplayPath; !strings.Contains(line, want) {
+		t.Errorf("the path line is missing %q: %q", want, line)
 	}
 }
 
@@ -120,10 +121,8 @@ func TestRenderRowsShareWidth(t *testing.T) {
 		m := newTestModel(t, 4, width, 30)
 		cols := m.rowColumns(width)
 		for i := range m.filtered {
-			for j, ln := range m.renderRow(i, width, cols) {
-				if got := lipgloss.Width(ln); got != width {
-					t.Errorf("width=%d row=%d line=%d: %d columns, want %d", width, i, j, got, width)
-				}
+			if got := lipgloss.Width(m.renderRow(i, width, cols)); got != width {
+				t.Errorf("width=%d row=%d: %d columns, want %d", width, i, got, width)
 			}
 		}
 	}
@@ -149,7 +148,7 @@ func TestColumnHeaderAlignsWithRows(t *testing.T) {
 		m := newTestModel(t, 3, width, 30)
 		c := m.rowColumns(width)
 		header := plain(m.renderColumnHeader(c))
-		row := plain(m.renderRow(0, width, c)[0])
+		row := plain(m.renderRow(0, width, c))
 		wt := m.worktrees[m.filtered[0]]
 
 		// col is where sub starts, in display columns rather than bytes.
@@ -396,6 +395,79 @@ func TestPromptPlaceholdersRenderInFull(t *testing.T) {
 		search.syncInputWidth()
 		if got := plain(search.renderStatusLine()); !strings.Contains(got, "filter by branch or path…") {
 			t.Errorf("width=%d: search line lost its placeholder: %q", width, got)
+		}
+	}
+}
+
+// A terminal wide enough gets two columns. Nothing may run past the content
+// width, and the pane's right border must land on the same column as the last
+// character of the top bar — the layout has one right edge, not two.
+func TestSplitLayoutColumnsLineUp(t *testing.T) {
+	for _, width := range []int{splitMinWidth, 140, 160, 240} {
+		m := newTestModel(t, 4, width, 30)
+		if !m.splitView() {
+			t.Fatalf("width=%d did not split", width)
+		}
+		edge := m.listWidth() + paneGap + m.paneWidth()
+		if edge != m.contentWidth()-1 {
+			t.Errorf("width=%d: the two columns span %d of %d", width, edge, m.contentWidth())
+		}
+		for i, ln := range strings.Split(m.View().Content, "\n") {
+			if got := lipgloss.Width(ln); got > m.contentWidth() {
+				t.Errorf("width=%d line %d runs to %d columns, past %d: %q",
+					width, i, got, m.contentWidth(), plain(ln))
+			}
+			if got := lipgloss.Width(strings.TrimRight(plain(ln), " ")); got > edge {
+				t.Errorf("width=%d line %d has ink at column %d, past the edge at %d: %q",
+					width, i, got, edge, plain(ln))
+			}
+		}
+	}
+}
+
+// Below splitMinWidth there is one column and no pane.
+func TestNarrowTerminalKeepsOneColumn(t *testing.T) {
+	m := newTestModel(t, 4, splitMinWidth-1, 30)
+	if m.splitView() {
+		t.Fatal("a terminal under splitMinWidth split anyway")
+	}
+	if m.paneWidth() != 0 {
+		t.Errorf("a one-column layout reserved %d columns for a pane", m.paneWidth())
+	}
+	if m.listWidth() != m.contentWidth() {
+		t.Errorf("the list got %d of %d columns", m.listWidth(), m.contentWidth())
+	}
+}
+
+// The pane is as tall as the list beside it, whatever it has to say.
+func TestPaneFillsTheListHeight(t *testing.T) {
+	for _, height := range []int{minViewHeight, 20, 24, 50} {
+		m := newTestModel(t, 4, 160, height)
+		want := 1 + m.listHeight() // the column header, then the rows
+		if got := len(m.renderPane(m.paneWidth(), want)); got != want {
+			t.Errorf("height=%d: pane is %d lines, want %d", height, got, want)
+		}
+	}
+}
+
+// With nothing to list there is nothing to describe, so the empty state gets
+// the whole width back.
+func TestEmptyListDropsThePane(t *testing.T) {
+	m := newTestModel(t, 0, 160, 24)
+	if m.splitView() {
+		t.Error("an empty list still drew a pane beside itself")
+	}
+}
+
+// The list keeps exactly the same number of rows either way; the pane is paid
+// for out of the width, not the height.
+func TestBothLayoutsFillTheListHeight(t *testing.T) {
+	for _, width := range []int{80, 160} {
+		for _, n := range []int{0, 1, 4, 40} {
+			m := newTestModel(t, n, width, 30)
+			if got := len(m.renderRows(m.listWidth())); got != m.listHeight() {
+				t.Errorf("width=%d n=%d: %d rows, want %d", width, n, got, m.listHeight())
+			}
 		}
 	}
 }

@@ -14,23 +14,19 @@ import (
 // View is the Elm view function — model in, string out. The base layer is
 // always the worktree list (or the help screen); prompts float on top of it.
 func (m model) View() tea.View {
-	width := m.width
-	if width == 0 {
-		width = 100
-	}
-
 	if m.width > 0 && (m.width < minViewWidth || m.height < minViewHeight) {
 		v := tea.NewView(m.viewTooSmall())
 		v.AltScreen = true
 		return v
 	}
 
-	// Past maxContentWidth a card's branch name and its age drift to opposite
-	// ends of the screen with a void between them, so the layout stops growing
-	// and stays left-aligned in the terminal.
-	width = min(width, maxContentWidth)
+	// Below splitMinWidth this is the whole layout and it stops growing at
+	// maxContentWidth, because past that a branch name and its age drift to
+	// opposite ends of the screen with a void between them. Above it, the
+	// spare columns go to a pane instead of into that void.
+	width := m.contentWidth()
 
-	base := m.viewList(width)
+	base := m.viewList()
 	if m.showHelp {
 		base = m.viewHelp(width)
 	}
@@ -63,19 +59,62 @@ func (m model) viewTooSmall() string {
 
 // --- Base layout ---
 
-func (m model) viewList(width int) string {
+func (m model) viewList() string {
+	listW := m.listWidth()
+
 	// A blank line under the brand, then the column labels: the labels are
 	// the only separator the list needs, and they earn their row by naming
 	// what each column of glyphs and numbers means.
 	header := ""
 	if len(m.filtered) > 0 {
-		header = m.renderColumnHeader(m.rowColumns(width))
+		header = m.renderColumnHeader(m.rowColumns(listW))
+	}
+	body := append([]string{header}, m.renderRows(listW)...)
+
+	// The top bar and the footer span both columns; only the list and the
+	// pane sit side by side.
+	if m.splitView() {
+		body = joinColumns(body, m.renderPane(m.paneWidth(), len(body)), listW)
 	}
 
-	lines := []string{"", m.renderTopBar(width), "", header}
-	lines = append(lines, m.renderRows(width)...)
-	lines = append(lines, m.renderStatusLine(), m.renderFooter(width))
+	lines := []string{"", m.renderTopBar(m.contentWidth()), ""}
+	lines = append(lines, body...)
+	if !m.splitView() {
+		lines = append(lines, m.renderSelectedPath(listW))
+	}
+	lines = append(lines, m.renderStatusLine(), m.renderFooter(m.contentWidth()))
 	return strings.Join(lines, "\n")
+}
+
+// joinColumns sets the pane beside the list, line for line. The list has
+// already been padded to listW by the row renderer; the header and the empty
+// state have not, so every line is padded again here.
+func joinColumns(left, right []string, listW int) []string {
+	out := make([]string, 0, max(len(left), len(right)))
+	gap := strings.Repeat(" ", paneGap)
+	for i := 0; i < max(len(left), len(right)); i++ {
+		var l, r string
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		out = append(out, padRight(l, listW)+gap+r)
+	}
+	return out
+}
+
+// renderSelectedPath is the one-column layout's home for the full path of the
+// worktree under the cursor. It sits at a fixed row above the status line —
+// under the row it belongs to, it moved every line below the cursor by one on
+// every keypress, and the list rippled as you scrolled.
+func (m model) renderSelectedPath(width int) string {
+	wt := m.selectedWorktree()
+	if wt == nil {
+		return ""
+	}
+	return " " + pathStyle.Render(truncate(wt.DisplayPath, max(0, width-2)))
 }
 
 // brand is the wordmark. The asterism is three marks in a clearing — a very
@@ -101,9 +140,8 @@ func (m model) renderTopBar(width int) string {
 }
 
 // renderRows renders the scrolling viewport of worktree rows, padded to a
-// fixed height so the footer never shifts as worktrees come and go. The
-// selected worktree contributes two lines rather than one; visibleRows has
-// already set that line aside.
+// fixed height so the footer never shifts as worktrees come and go. Every
+// worktree is exactly one line, selected or not.
 func (m model) renderRows(width int) []string {
 	height := m.listHeight()
 	var lines []string
@@ -114,7 +152,7 @@ func (m model) renderRows(width int) []string {
 		cols := m.rowColumns(width)
 		end := min(m.scrollOffset+m.visibleRows(), len(m.filtered))
 		for i := m.scrollOffset; i < end; i++ {
-			lines = append(lines, m.renderRow(i, width, cols)...)
+			lines = append(lines, m.renderRow(i, width, cols))
 		}
 		if hint := scrollHint(m.scrollOffset, len(m.filtered)-end); hint != "" {
 			lines = append(lines, "  "+columnStyle.Render(hint))
@@ -314,13 +352,14 @@ const (
 	gutterWidth = 2
 )
 
-// renderRow draws one worktree as a row of aligned columns. The selected one
-// adds a second line under its name carrying the full path — the thing enter
-// is about to hand back — set light enough to read as a caption:
+// renderRow draws one worktree as a row of aligned columns:
 //
 //	> feat/parser                      ● 3  ↑2   12m  a1b2c3d
-//	  ~/.mori/worktrees/mori/feat/parser
-func (m model) renderRow(idx, width int, c rowColumns) []string {
+//
+// One line, always. The full path lives at a fixed spot below the list, or in
+// the side pane — anywhere but here, where it used to push every row beneath
+// the cursor down a line and back again as the selection moved.
+func (m model) renderRow(idx, width int, c rowColumns) string {
 	wt := m.worktrees[m.filtered[idx]]
 	selected := idx == m.cursor
 	p := newRowPalette(selected)
@@ -346,14 +385,7 @@ func (m model) renderRow(idx, width int, c rowColumns) []string {
 	row += cell(relativeTime(wt.Age()), c.age, 2, true, p.meta)
 	row += cell(wt.Head, c.head, 2, false, p.head)
 
-	lines := []string{padRight(row, width)}
-	if selected {
-		// Indented to the branch column, so the path hangs off the name it
-		// belongs to rather than starting a column of its own.
-		path := truncate(wt.DisplayPath, max(0, width-gutterWidth-1))
-		lines = append(lines, padRight(strings.Repeat(" ", gutterWidth)+pathStyle.Render(path), width))
-	}
-	return lines
+	return padRight(row, width)
 }
 
 // renderSweep draws the one-pass highlight over a freshly created worktree's
@@ -407,7 +439,14 @@ func (m model) footerHints() []keyHint {
 	hints = append(hints, keyHint{key: "n", label: "new"})
 	if len(m.filtered) > 0 {
 		hints = append(hints, keyHint{key: "d", label: "delete", prio: 1})
-		hints = append(hints, keyHint{key: "i", label: "details", prio: 2})
+		detail := keyHint{key: "i", label: "details", prio: 2}
+		if m.width >= splitMinWidth {
+			detail.label = "fold pane"
+			if !m.paneOpen {
+				detail.label = "show pane"
+			}
+		}
+		hints = append(hints, detail)
 		if wt := m.selectedWorktree(); wt != nil && m.archived[wt.Branch] {
 			hints = append(hints, keyHint{key: "x", label: "unarchive", prio: 3})
 		}
@@ -591,33 +630,40 @@ type detailLine struct {
 	drop int
 }
 
-// renderDetailCard describes the selected worktree in full: the path enter
-// would hand back, the git state the row only had glyphs for, and the tail of
-// its history — enough to tell two similar branches apart without leaving
-// mori to run git log.
-func (m model) renderDetailCard(width int) string {
-	w := cardWidth(width, detailCardMaxWidth)
-	wt := m.selectedWorktree()
-	if wt == nil {
-		return renderFrame("\n "+mutedStyle.Render("nothing selected")+"\n", w, "worktree")
-	}
-	innerW := w - 3 // the frame, plus the one-column left margin every line takes
-
+// detailBody describes a worktree in full: the path enter would hand back,
+// the git state the row only had glyphs for, and the tail of its history —
+// enough to tell two similar branches apart without leaving mori to run git
+// log. Both the floating card and the side pane are this, framed differently.
+func (m model) detailBody(wt internal.Worktree, innerW int) []detailLine {
 	lines := []detailLine{
 		{"", dropPadding},
 		{" " + selectedStyle.Render(truncate(wt.Label(), innerW)), dropNever},
 		{" " + pathStyle.Render(truncate(wt.DisplayPath, innerW)), dropNever},
 		{"", dropPadding},
 	}
-	for _, f := range m.detailFields(*wt) {
+	for _, f := range m.detailFields(wt) {
 		lines = append(lines, detailLine{
 			" " + mutedStyle.Render(f.label) + strings.Repeat(" ", max(1, detailLabelWidth-len(f.label))) +
 				textStyle.Render(truncate(f.value, innerW-detailLabelWidth)), f.drop,
 		})
 	}
-
 	lines = append(lines, detailLine{"", dropPadding})
-	lines = append(lines, m.detailHistoryLines(innerW)...)
+	return append(lines, m.detailHistoryLines(innerW)...)
+}
+
+// renderDetailCard floats the detail over the list, for terminals too narrow
+// to set it beside one.
+func (m model) renderDetailCard(width int) string {
+	w := cardWidth(width, detailCardMaxWidth)
+	wt := m.selectedWorktree()
+	if wt == nil {
+		return renderFrame("\n "+mutedStyle.Render("nothing selected")+"\n", w, "worktree")
+	}
+	// The frame, plus the one-column margin every line keeps on each side, so
+	// a truncated commit subject does not end against the border.
+	innerW := w - 4
+
+	lines := m.detailBody(*wt, innerW)
 	lines = append(lines, detailLine{"", dropPadding})
 	lines = append(lines, detailLine{" " + renderHints([]keyHint{
 		{key: "enter", label: "cd"}, {key: "y", label: "copy path"}, {key: "esc", label: "close"},
@@ -631,6 +677,29 @@ func (m model) renderDetailCard(width int) string {
 		budget = m.height - 3
 	}
 	return renderFrame(strings.Join(fitDetailLines(lines, budget), "\n"), w, "worktree")
+}
+
+// renderPane is the same detail set beside the list rather than over it, as
+// tall as the list is and following the cursor. It needs no action row: every
+// key it would name is already in the footer below it.
+func (m model) renderPane(w, height int) []string {
+	inner := height - 2 // the pane's own border rows
+	wt := m.selectedWorktree()
+
+	var body []string
+	if wt == nil {
+		body = []string{"", " " + mutedStyle.Render("nothing to describe")}
+	} else {
+		body = fitDetailLines(m.detailBody(*wt, w-4), inner)
+	}
+
+	// The frame is as tall as its content, and the content is padded to the
+	// list beside it — a pane that stopped short would leave the layout with
+	// two different bottom edges.
+	for len(body) < inner {
+		body = append(body, "")
+	}
+	return strings.Split(renderFrame(strings.Join(body[:max(0, inner)], "\n"), w, "worktree"), "\n")
 }
 
 // fitDetailLines drops whole tiers, highest first, until the pane fits the

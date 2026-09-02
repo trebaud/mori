@@ -38,12 +38,18 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
 `utils.go`. The TUI renders to `/dev/tty` so stdout stays clean for the
 selected path.
 
-The list is a viewport of single-line rows: `rowHeight` per worktree,
-`detailHeight` more for the selected one (which shows its full path under its
-name), and `chromeHeight` rows of surrounding chrome. `renderRows` must always
-return exactly `listHeight()` rows or the footer jumps, so `visibleRows()`
-holds the detail line back. Selection is a `>` caret in the gutter plus the
-accent on the branch name — nothing in the list paints a background.
+The layout has two shapes. Under `splitMinWidth` it is one column and the
+selected worktree's path sits at a fixed row above the status line. At or
+above it, `listWidth()` columns of list sit beside a `paneWidth()` pane that
+describes whatever the cursor is on; `i` folds the pane away. Both end on the
+same column as the top bar, which is why `listWidth` subtracts a margin.
+
+The list is a viewport of single-line rows — one line per worktree, selected
+or not. A selected row that grew a second line pushed everything under it down
+and back on every keypress. `renderRows` must always return exactly
+`listHeight()` rows or the footer jumps. Selection is a `>` caret in the
+gutter plus the accent on the branch name — nothing in the list paints a
+background.
 
 After a create, the caret moves to the new worktree and an underline sweeps
 once across its name. The sweep is clocked from the `refreshedMsg` that first
@@ -51,13 +57,20 @@ carries the row, not from the create that asked for one: `ListLinked` shells
 out to git, and a sweep started earlier would be half spent before there was
 anything to point at.
 
-`i` (or `tab`) floats a detail pane over the list: the full path, the git
-state spelled out, and the tail of `git log` for that branch. It is the one
-overlay whose content outgrows a short terminal, so every line carries a drop
-tier and `fitDetailLines` sheds whole tiers — padding, then the fields the row
-already showed, then history oldest-first — until the card fits. The
-compositor clips anything past the bottom, border included, so the pane must
-size itself rather than trust the terminal.
+`detailBody` is the detail set — the full path, the git state spelled out,
+and the tail of `git log` for that branch. The side pane and the card `i`
+floats on a narrow terminal are both that, framed differently. Its content
+outgrows a short terminal, so every line carries a drop tier and
+`fitDetailLines` sheds whole tiers — padding, then the fields the row already
+showed, then history oldest-first — until it fits. The compositor clips
+anything past the bottom, border included, so the pane must size itself rather
+than trust the terminal.
+
+The pane follows the cursor through `paneFollow`, called once in `Update`
+after every key rather than in each handler that can move the selection. It
+only *schedules* the `git log`: `detailWantedMsg` carries the cursor
+generation it was queued under and is dropped if the cursor has moved on, so
+scrolling a long list costs one query, for the row you stop on.
 
 `renderColumnHeader` draws the labels through the same `cell` calls a row
 uses, so labels stay over the values they name; column widths are measured on

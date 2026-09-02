@@ -115,6 +115,14 @@ func spinnerTickCmd() tea.Cmd {
 // terminal has room for.
 const detailCommitLimit = 12
 
+// scheduleDetailCmd waits out the debounce, then asks for the history if the
+// cursor is still where it was.
+func scheduleDetailCmd(seq int, branch, path string) tea.Cmd {
+	return tea.Tick(detailDebounce, func(time.Time) tea.Msg {
+		return detailWantedMsg{seq: seq, branch: branch, path: path}
+	})
+}
+
 func loadDetailCmd(branch, path string) tea.Cmd {
 	return func() tea.Msg {
 		commits, err := git.RecentCommits(path, detailCommitLimit)

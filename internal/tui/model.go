@@ -15,15 +15,35 @@ import (
 // HEAD in aligned columns — and the selected one spends a second row on its
 // full path.
 const (
-	rowHeight     = 1
-	detailHeight  = 1 // the path line under the selected worktree
-	chromeHeight  = 7 // blank, top bar, blank, column labels, status, footer, trailing
-	minViewWidth  = 44
-	minViewHeight = 12
-	// maxContentWidth caps how wide the layout grows. Past it the two columns
-	// of a card sit too far apart to read as one row.
+	rowHeight = 1
+	// baseChromeHeight is what surrounds the list in every layout: a blank
+	// line, the top bar, a blank line, the column labels, the status line,
+	// the footer, and a trailing line. A one-column layout adds one more for
+	// the selected worktree's path; the split layout puts that in the pane.
+	baseChromeHeight = 7
+	minViewWidth     = 44
+	minViewHeight    = 12
+	// maxContentWidth caps how wide a single column of list grows. Past it the
+	// branch name and the git state sit too far apart to read as one row.
 	maxContentWidth = 100
-	refreshEvery    = 15 * time.Second
+	// splitMinWidth is where the layout stops being one column. Below it there
+	// is no room for a pane that does not starve the list.
+	splitMinWidth = 120
+	// The pane takes about a third of the terminal, between these bounds: less
+	// than paneMinWidth cannot hold a commit subject, more than paneMaxWidth
+	// is a column of short lines in a wide field of nothing.
+	paneMinWidth = 44
+	paneMaxWidth = 76
+	// maxSplitWidth caps the two columns together. A very wide terminal gets
+	// the layout it can read, not all the columns it can hold.
+	maxSplitWidth = 180
+	// paneGap separates the two columns.
+	paneGap      = 2
+	refreshEvery = 15 * time.Second
+	// detailDebounce is how long the cursor must rest before the pane asks git
+	// for history. Held-down `j` should scroll a list, not fork a process per
+	// row it passes.
+	detailDebounce = 120 * time.Millisecond
 )
 
 // A worktree that was just created is one more row in a list of twenty. For
@@ -114,6 +134,14 @@ type worktreeRestoredMsg struct {
 	err    error
 }
 
+// detailWantedMsg fires once the cursor has rested long enough for the side
+// pane to be worth a `git log`. seq is the cursor generation it was scheduled
+// under; a later move makes it stale and it is dropped.
+type detailWantedMsg struct {
+	seq          int
+	branch, path string
+}
+
 // detailLoadedMsg carries the history the detail pane asked git for. branch
 // identifies which request it answers, so a pane closed and reopened on
 // another worktree never renders the previous one's log.
@@ -150,6 +178,10 @@ type model struct {
 
 	scrollOffset int // first visible card
 	deleteTarget int // index into filtered
+	// paneOpen governs the side pane on a terminal wide enough for one. It is
+	// on by default — the pane is the layout, not an extra — and `i` folds it
+	// away for a session that wants nothing but the list.
+	paneOpen bool
 	// deleteNeedsName is set when the worktree being confirmed has
 	// uncommitted work. A keystroke is too cheap for something unrecoverable,
 	// so that case asks for the branch name typed out.
@@ -161,6 +193,10 @@ type model struct {
 	detailCommits []git.Commit
 	detailErr     error
 	detailLoading bool
+	// detailSeq counts cursor moves. A debounced history load carries the seq
+	// it was scheduled under and is dropped if the cursor has moved on since,
+	// so only the row the user actually stopped on costs a `git log`.
+	detailSeq int
 
 	// sweepBranch is the freshly created worktree being highlighted, empty
 	// once the sweep has run its course.
@@ -187,6 +223,7 @@ func newModel(worktrees []internal.Worktree, repoLabel, baseBranch string) model
 		mode:       modeNormal,
 		sortMode:   internal.SortDefault,
 		archived:   loadArchived(),
+		paneOpen:   true,
 	}
 	m.applyFilter()
 	return m
@@ -198,28 +235,73 @@ func (m model) Init() tea.Cmd {
 
 // --- Layout helpers ---
 
+// splitView reports whether the layout is two columns: the list, and a pane
+// describing whatever the cursor is on. With nothing to list there is nothing
+// for a pane to describe, and the empty state would rather have the width.
+func (m model) splitView() bool {
+	return m.paneOpen && m.width >= splitMinWidth && len(m.filtered) > 0
+}
+
+// contentWidth is how much of the terminal the layout uses. One column stops
+// growing at maxContentWidth; two columns keep going, to a point.
+func (m model) contentWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = 100
+	}
+	if m.splitView() {
+		return min(w, maxSplitWidth)
+	}
+	return min(w, maxContentWidth)
+}
+
+// paneWidth is the side pane's width, zero when there is no pane.
+func (m model) paneWidth() int {
+	if !m.splitView() {
+		return 0
+	}
+	return min(max(m.contentWidth()/3, paneMinWidth), paneMaxWidth)
+}
+
+// listWidth is what the rows are measured against — the whole content width,
+// less the pane, the gap before it, and the one-column right margin the top
+// bar and the footer already keep, so all three end on the same column.
+func (m model) listWidth() int {
+	if p := m.paneWidth(); p > 0 {
+		return m.contentWidth() - p - paneGap - 1
+	}
+	return m.contentWidth()
+}
+
+// chromeHeight is the number of rows the list does not get. The one-column
+// layout spends one of them on the selected worktree's path, at a fixed
+// position above the status line: inlined under its row instead, it shifted
+// every row below the cursor by a line on every keypress.
+func (m model) chromeHeight() int {
+	if m.splitView() {
+		return baseChromeHeight
+	}
+	return baseChromeHeight + 1
+}
+
 // listHeight is the number of rows available for the worktree list.
 func (m model) listHeight() int {
 	if m.height <= 0 {
 		return 12
 	}
-	h := m.height - chromeHeight
+	h := m.height - m.chromeHeight()
 	if h < rowHeight {
 		h = rowHeight
 	}
 	return h
 }
 
-// visibleRows is how many worktrees fit in the list area. One line is always
-// held back for the selected worktree's path, and when the list overflows the
-// bottom row goes to the scroll hint instead of a worktree — so the viewport
-// is always exactly listHeight lines and the footer never moves, wherever the
-// cursor sits and whether or not there is more to scroll to.
+// visibleRows is how many worktrees fit in the list area. Every row is one
+// line, so this is the list height — less one when the list overflows and the
+// bottom row goes to the scroll hint instead of a worktree. The viewport is
+// always exactly listHeight lines, so the footer never moves.
 func (m model) visibleRows() int {
 	h := m.listHeight()
-	if len(m.filtered) > 0 {
-		h -= detailHeight
-	}
 	if len(m.filtered) > h {
 		h--
 	}

@@ -18,7 +18,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.syncInputWidth()
 		m.adjustScroll()
-		return m, nil
+		// Widening the terminal can bring the pane into being. Two copies of
+		// the same detail is one too many, so the floating one steps aside.
+		if m.splitView() && m.mode == modeDetail {
+			m.mode = modeNormal
+			m.detailBranch = ""
+		}
+		return m, m.paneFollow()
 
 	case tickMsg:
 		if m.statusMsg != nil && time.Now().After(m.statusMsg.expires) {
@@ -38,7 +44,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyFilter()
 		}
 		if m.sweepBranch == "" {
-			return m, nil
+			return withPaneFollow(m, nil)
 		}
 		// A sweep is clocked from the refresh that first carries its row, not
 		// from the create that asked for one: querying git takes long enough
@@ -46,12 +52,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// highlights existed. The caret follows it in.
 		switch found := m.focusBranch(m.sweepBranch); {
 		case found && m.sweepFrame == 0:
-			return m, sweepTickCmd()
+			return withPaneFollow(m, sweepTickCmd())
 		case !found:
 			// Filtered out, or gone again. Nothing to highlight.
 			m.sweepBranch = ""
 		}
-		return m, nil
+		return withPaneFollow(m, nil)
 
 	case sweepTickMsg:
 		if m.sweepBranch == "" {
@@ -115,9 +121,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sweepFrame = 0
 		return m, refreshCmd()
 
+	case detailWantedMsg:
+		// Stale: the cursor moved on while the debounce was running.
+		if msg.seq != m.detailSeq || msg.branch != m.detailBranch {
+			return m, nil
+		}
+		m.detailLoading = true
+		return m, tea.Batch(loadDetailCmd(msg.branch, msg.path), spinnerTickCmd())
+
 	case detailLoadedMsg:
 		// Late arrivals for a pane that has since closed or moved on are dropped.
-		if m.mode != modeDetail || msg.branch != m.detailBranch {
+		if (m.mode != modeDetail && !m.splitView()) || msg.branch != m.detailBranch {
 			return m, nil
 		}
 		m.detailLoading = false
@@ -151,9 +165,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, refreshCmd()
 
 	case tea.KeyPressMsg:
-		return m.handleKey(msg)
+		// Almost every key can land the cursor on a different worktree —
+		// moving, filtering, sorting, archiving, unfolding the pane. Rather
+		// than remember to re-point the pane in each one, do it once here,
+		// after the key has had its say.
+		next, cmd := m.handleKey(msg)
+		return withPaneFollow(next, cmd)
 	}
 	return m, nil
+}
+
+// withPaneFollow re-points the side pane at whatever the cursor now sits on,
+// batching the history load behind whatever the handler already returned.
+func withPaneFollow(next tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	m, ok := next.(model)
+	if !ok {
+		return next, cmd
+	}
+	if follow := m.paneFollow(); follow != nil {
+		return m, tea.Batch(cmd, follow)
+	}
+	return m, cmd
 }
 
 // --- Key dispatch ---
@@ -232,6 +264,13 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		}
 
 	case "i", "tab":
+		// Wide enough for a pane, and the detail is already beside the list:
+		// the key folds it away instead of floating a second copy over it.
+		if m.width >= splitMinWidth {
+			m.paneOpen = !m.paneOpen
+			m.adjustScroll()
+			return m, nil
+		}
 		if wt := m.selectedWorktree(); wt != nil {
 			m.mode = modeDetail
 			m.detailBranch = wt.Label()
@@ -474,6 +513,33 @@ func (m model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 // select with the mouse.
 func yankText(wt internal.Worktree) string {
 	return "copied " + wt.DisplayPath
+}
+
+// paneFollow keeps the side pane pointed at the row under the cursor. It is
+// cheap while the pane is closed — there is nothing to describe — and while
+// it is open it only schedules a debounced history load, so scrolling through
+// a long list costs one `git log`, for the row the cursor settles on.
+func (m *model) paneFollow() tea.Cmd {
+	if !m.splitView() {
+		return nil
+	}
+	wt := m.selectedWorktree()
+	if wt == nil {
+		m.detailBranch = ""
+		m.detailCommits = nil
+		m.detailErr = nil
+		m.detailLoading = false
+		return nil
+	}
+	if wt.Label() == m.detailBranch {
+		return nil
+	}
+	m.detailBranch = wt.Label()
+	m.detailCommits = nil
+	m.detailErr = nil
+	m.detailLoading = false
+	m.detailSeq++
+	return scheduleDetailCmd(m.detailSeq, wt.Label(), wt.Path)
 }
 
 // --- Status-message constructors ---

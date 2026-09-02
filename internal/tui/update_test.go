@@ -109,12 +109,12 @@ func TestRenderSweepTravelsWithoutResizing(t *testing.T) {
 func TestSweepingRowKeepsItsWidth(t *testing.T) {
 	m := newTestModel(t, 4, 80, 24)
 	cols := m.rowColumns(80)
-	still := m.renderRow(1, 80, cols)[0]
+	still := m.renderRow(1, 80, cols)
 
 	m.sweepBranch = m.worktrees[m.filtered[1]].Branch
 	for f := 0; f <= sweepFrames; f++ {
 		m.sweepFrame = f
-		row := m.renderRow(1, 80, cols)[0]
+		row := m.renderRow(1, 80, cols)
 		if plain(row) != plain(still) {
 			t.Fatalf("frame %d: row reads %q, want %q", f, plain(row), plain(still))
 		}
@@ -295,5 +295,65 @@ func TestDetachedRemovalArmsNoUndo(t *testing.T) {
 	next, _ := m.Update(worktreeRemovedMsg{})
 	if next.(model).undo != nil {
 		t.Fatal("a removal with no branch armed the undo anyway")
+	}
+}
+
+// The pane follows the cursor, but only after it stops: a held-down `j` must
+// not fork a `git log` for every row it passes.
+func TestPaneFollowsTheCursorOnceItSettles(t *testing.T) {
+	m := newTestModel(t, 4, 160, 30)
+	if !m.splitView() {
+		t.Fatal("a 160-column terminal did not split")
+	}
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("moving the cursor scheduled no history load")
+	}
+	want := m.worktrees[m.filtered[m.cursor]].Label()
+	if m.detailBranch != want {
+		t.Fatalf("the pane points at %q, want %q", m.detailBranch, want)
+	}
+	if m.detailLoading {
+		t.Error("the pane started loading before the debounce elapsed")
+	}
+
+	// The load that the first move scheduled arrives after a second move.
+	stale := detailWantedMsg{seq: m.detailSeq, branch: m.detailBranch, path: "/w"}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = next.(model)
+	if after, cmd := m.Update(stale); cmd != nil || after.(model).detailLoading {
+		t.Error("a stale history request survived the cursor moving on")
+	}
+
+	fresh := detailWantedMsg{seq: m.detailSeq, branch: m.detailBranch, path: "/w"}
+	after, cmd := m.Update(fresh)
+	if cmd == nil || !after.(model).detailLoading {
+		t.Error("the current history request was dropped")
+	}
+}
+
+// On a narrow terminal `i` floats the detail; on a wide one the detail is
+// already there, so the key folds the pane away instead.
+func TestDetailKeyTogglesThePaneWhenThereIsOne(t *testing.T) {
+	wide := newTestModel(t, 4, 160, 30)
+	next, _ := wide.handleNormalKey("i")
+	wide = next.(model)
+	if wide.mode == modeDetail {
+		t.Error("a wide terminal floated a second copy of the pane")
+	}
+	if wide.paneOpen {
+		t.Error("i did not fold the pane away")
+	}
+	next, _ = wide.handleNormalKey("i")
+	if !next.(model).paneOpen {
+		t.Error("i did not bring the pane back")
+	}
+
+	narrow := newTestModel(t, 4, 80, 30)
+	next, _ = narrow.handleNormalKey("i")
+	if next.(model).mode != modeDetail {
+		t.Error("a narrow terminal did not float the detail")
 	}
 }
