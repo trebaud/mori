@@ -22,8 +22,10 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
 
 **`internal/`** — Core logic:
 - `worktree.go` — the `Worktree` model, create/remove, sorting. `List()` returns
-  every worktree git reports, including the main working tree, so lookups can
-  give precise errors; `ListLinked()` drops main and is what every display uses.
+  every worktree git reports, the main working tree included, and is what every
+  display and lookup uses. Main is flagged `IsMain` rather than hidden: it is
+  the row you are most often standing in, and the one `d` and `mori remove`
+  refuse — a list that left it out could not say so.
 - `paths.go` — where mori keeps state. Worktrees go in
   `~/.mori/worktrees/<repo>/<branch>`, never inside the repository: nested,
   git treats them as an untracked embedded repo and `git add -A` commits a
@@ -64,9 +66,9 @@ background.
 
 After a create, the caret moves to the new worktree and an underline sweeps
 once across its name. The sweep is clocked from the `refreshedMsg` that first
-carries the row, not from the create that asked for one: `ListLinked` shells
-out to git, and a sweep started earlier would be half spent before there was
-anything to point at.
+carries the row, not from the create that asked for one: `List` shells out to
+git, and a sweep started earlier would be half spent before there was anything
+to point at.
 
 `detailBody` is the detail set — the full path, the git state spelled out,
 and the tail of `git log` for that branch. The side pane and the card `i`

@@ -349,8 +349,13 @@ func (m model) renderColumnHeader(c rowColumns) string {
 	return row
 }
 
-// hereGlyph marks the worktree mori was launched from.
-const hereGlyph = "◆"
+// hereGlyph marks the worktree mori was launched from; mainGlyph marks the
+// main working tree, which is in the list but is not one of the disposable
+// directories around it — `d` will not take it.
+const (
+	hereGlyph = "◆"
+	mainGlyph = "⌂"
+)
 
 // rowLabel is what the branch column shows for a worktree. The glyphs go in
 // front of the name rather than in the gutter, which belongs to the cursor —
@@ -360,6 +365,8 @@ func (m model) rowLabel(wt internal.Worktree) string {
 	switch {
 	case m.isHere(wt):
 		return hereGlyph + " " + wt.Label()
+	case wt.IsMain:
+		return mainGlyph + " " + wt.Label()
 	case m.archived[wt.Branch]:
 		return "◌ " + wt.Label()
 	}
@@ -901,6 +908,8 @@ func (m model) detailFields(wt internal.Worktree) []detailField {
 	switch {
 	case m.isHere(wt):
 		fields = append(fields, detailField{"state", "you are here", dropField})
+	case wt.IsMain:
+		fields = append(fields, detailField{"state", "the main worktree", dropField})
 	case m.archived[wt.Branch]:
 		fields = append(fields, detailField{"state", "archived", dropField})
 	}
@@ -981,6 +990,7 @@ var helpSections = []struct {
 	}},
 	{"marks", [][2]string{
 		{hereGlyph, "the worktree you are standing in"},
+		{mainGlyph, "the main working tree"},
 		{"◌", "archived"},
 		{"● n", "n files with uncommitted changes"},
 		{"↑/↓ n", "ahead of / behind the base"},

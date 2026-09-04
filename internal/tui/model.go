@@ -183,10 +183,9 @@ type model struct {
 
 	repoLabel  string
 	baseBranch string
-	// hereRoot is the worktree mori was launched from, or "" when that is the
-	// main working tree (which the list does not carry) or unknown. The row
-	// for it is marked: knowing where you already are is half of deciding
-	// where to go.
+	// hereRoot is the worktree mori was launched from, or "" when git could
+	// not say. The row for it is marked: knowing where you already are is
+	// half of deciding where to go.
 	hereRoot      string
 	width, height int
 

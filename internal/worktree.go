@@ -54,8 +54,8 @@ func (w Worktree) Label() string {
 }
 
 // List returns every worktree of the repository containing the working
-// directory, enriched with git state. Per-worktree git queries run in
-// parallel since each one shells out.
+// directory — the main working tree included — enriched with git state.
+// Per-worktree git queries run in parallel since each one shells out.
 func List() ([]Worktree, error) {
 	mainPath, err := git.FindMainRepo(".")
 	if err != nil {
@@ -90,24 +90,6 @@ func List() ([]Worktree, error) {
 	wg.Wait()
 
 	return wts, nil
-}
-
-// ListLinked returns the worktrees mori manages — git's *linked* working
-// trees, excluding the main one. The main working tree is the repository you
-// are already in, not something to switch to or delete, so it stays out of
-// every listing. Lookups that need it (removing, resolving a path) use List.
-func ListLinked() ([]Worktree, error) {
-	wts, err := List()
-	if err != nil {
-		return nil, err
-	}
-	linked := make([]Worktree, 0, len(wts))
-	for _, wt := range wts {
-		if !wt.IsMain {
-			linked = append(linked, wt)
-		}
-	}
-	return linked, nil
 }
 
 // parseList turns `git worktree list --porcelain` output into Worktrees.
@@ -272,7 +254,7 @@ func FindByBranch(worktrees []Worktree, branch string) *Worktree {
 type SortMode int
 
 const (
-	// SortDefault keeps git's order, with the main worktree first.
+	// SortDefault keeps git's order, which starts at the main worktree.
 	SortDefault SortMode = iota
 	// SortRecent puts the most recently committed worktrees first.
 	SortRecent

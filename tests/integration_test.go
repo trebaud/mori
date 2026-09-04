@@ -149,6 +149,7 @@ type worktreeJSON struct {
 	Branch      string `json:"branch"`
 	DisplayPath string `json:"display_path"`
 	Head        string `json:"head"`
+	IsMain      bool   `json:"is_main"`
 	Detached    bool   `json:"detached"`
 	Dirty       int    `json:"dirty"`
 	Ahead       int    `json:"ahead"`
@@ -374,25 +375,31 @@ func TestListBasic(t *testing.T) {
 	}
 }
 
-// The main working tree is the repository you are already in — mori manages
-// git's linked worktrees, so main never appears in a listing.
-func TestListExcludesMainWorktree(t *testing.T) {
+// The main working tree is listed with the linked ones — it is where the
+// branches come from, and a listing that hides it is missing the row you are
+// most often standing in. It is flagged, because it is the one row mori will
+// not remove.
+func TestListIncludesMainWorktree(t *testing.T) {
 	t.Parallel()
 	dir := initTestRepo(t)
 
-	if items := listJSON(t, dir); len(items) != 0 {
-		t.Errorf("a repo with no linked worktrees should list nothing, got %+v", items)
+	items := listJSON(t, dir)
+	if len(items) != 1 {
+		t.Fatalf("a repo with no linked worktrees should list main alone, got %+v", items)
+	}
+	if !items[0].IsMain {
+		t.Errorf("the main worktree is not flagged is_main: %+v", items[0])
 	}
 
 	res := runMori(t, dir, "list")
 	if res.exitCode != 0 {
 		t.Fatalf("exit %d, stderr: %s", res.exitCode, res.stderr)
 	}
-	if strings.Contains(res.stdout, "main") {
-		t.Errorf("main worktree leaked into the table:\n%s", res.stdout)
+	if !strings.Contains(res.stdout, "main") {
+		t.Errorf("main worktree missing from the table:\n%s", res.stdout)
 	}
 
-	// It stays visible to lookups, so errors can stay precise.
+	// Listing it is not offering to delete it.
 	if res := runMori(t, dir, "remove", "main"); !strings.Contains(res.stderr, "cannot remove the main worktree") {
 		t.Errorf("expected a main-worktree error, got: %q", res.stderr)
 	}
@@ -416,8 +423,8 @@ func TestListJSON(t *testing.T) {
 	dir := initTestRepoWithWorktree(t, "json-branch")
 
 	items := listJSON(t, dir)
-	if len(items) != 1 {
-		t.Fatalf("got %d worktrees, want 1 (main is excluded)", len(items))
+	if len(items) != 2 {
+		t.Fatalf("got %d worktrees, want 2 (the new one plus main)", len(items))
 	}
 
 	wt := findByBranch(items, "json-branch")
@@ -689,8 +696,8 @@ func TestFullLifecycle(t *testing.T) {
 	}
 
 	items := listJSON(t, dir)
-	if len(items) != 3 {
-		t.Fatalf("got %d worktrees, want 3", len(items))
+	if len(items) != 4 {
+		t.Fatalf("got %d worktrees, want 4 (three new ones plus main)", len(items))
 	}
 
 	// Each one resolves back to a real directory.
@@ -711,7 +718,7 @@ func TestFullLifecycle(t *testing.T) {
 		}
 	}
 
-	if items := listJSON(t, dir); len(items) != 0 {
-		t.Errorf("got %d worktrees after cleanup, want 0", len(items))
+	if items := listJSON(t, dir); len(items) != 1 {
+		t.Errorf("got %d worktrees after cleanup, want 1 (main)", len(items))
 	}
 }

@@ -503,8 +503,35 @@ func TestTheCurrentWorktreeIsMarked(t *testing.T) {
 	}
 }
 
-// With no current worktree — mori launched from the main working tree, which
-// the list does not carry — nothing is marked.
+// The main working tree is listed among the linked ones, so it carries a mark
+// of its own — it is the one row `d` will not take. Standing in it wins: where
+// you are is the more useful thing to know.
+func TestMainWorktreeIsMarked(t *testing.T) {
+	m := newTestModel(t, 3, 80, 30)
+	main := &m.worktrees[m.filtered[0]]
+	main.IsMain = true
+
+	if got := m.rowLabel(*main); !strings.HasPrefix(got, mainGlyph) {
+		t.Errorf("the main worktree row is %q, want it marked with %q", got, mainGlyph)
+	}
+	var state string
+	for _, f := range m.detailFields(*main) {
+		if f.label == "state" {
+			state = f.value
+		}
+	}
+	if state != "the main worktree" {
+		t.Errorf("the detail says %q, want %q", state, "the main worktree")
+	}
+
+	m.hereRoot = main.Path
+	if got := m.rowLabel(*main); !strings.HasPrefix(got, hereGlyph) {
+		t.Errorf("standing in main, the row is %q, want the here mark", got)
+	}
+}
+
+// With no current worktree — git could not say where mori was launched from —
+// nothing is marked.
 func TestNoMarkWithoutACurrentWorktree(t *testing.T) {
 	m := newTestModel(t, 3, 80, 30)
 	for _, i := range m.filtered {

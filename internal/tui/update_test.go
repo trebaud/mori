@@ -210,6 +210,43 @@ func TestDeleteConfirmationIgnoresY(t *testing.T) {
 	}
 }
 
+// The main working tree is in the list now, and `d` on it must say why it is
+// not going anywhere rather than open a confirmation that leads nowhere.
+func TestDeleteRefusesTheMainWorktree(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.worktrees[m.filtered[0]].IsMain = true
+	m.cursor = 0
+
+	next, _ := m.handleNormalKey("d")
+	m = next.(model)
+	if m.mode != modeNormal {
+		t.Fatal("`d` opened a confirmation on the main worktree")
+	}
+	if m.statusMsg == nil || !strings.Contains(m.statusMsg.text, "main worktree") {
+		t.Fatalf("no reason given, status is %+v", m.statusMsg)
+	}
+}
+
+// deleteTarget is an index, and a refresh can slide a different worktree under
+// it between the keypress and the confirmation. Main is the one row where that
+// would be unrecoverable, so the removal checks again on the way out.
+func TestConfirmedDeleteRechecksForMain(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.worktrees[m.filtered[1]].Dirty = 0
+	m.cursor = 1
+	next, _ := m.handleNormalKey("d")
+	m = next.(model)
+
+	m.worktrees[m.filtered[1]].IsMain = true
+	after, cmd := m.handleDeleteKey(tea.KeyPressMsg{}, "enter")
+	if cmd != nil {
+		t.Fatal("enter removed the main worktree")
+	}
+	if after.(model).mode != modeNormal {
+		t.Fatal("the confirmation stayed open")
+	}
+}
+
 // A clean worktree is a checkout away from coming back, so enter is enough.
 func TestEnterDeletesACleanWorktree(t *testing.T) {
 	m := newTestModel(t, 3, 80, 24)

@@ -407,9 +407,14 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		return m, m.textInput.Focus()
 
 	case "d", "D":
-		// The list holds only linked worktrees; the IsMain check backstops
-		// that invariant because a removal takes the directory with it.
-		if wt := m.selectedWorktree(); wt != nil && !wt.IsMain {
+		// The main working tree is in the list like any other, but removing it
+		// would take the repository with it. Say so rather than open a
+		// confirmation that cannot be confirmed.
+		if wt := m.selectedWorktree(); wt != nil {
+			if wt.IsMain {
+				m.statusMsg = errorStatus("cannot remove the main worktree")
+				return m, nil
+			}
 			m.mode = modeConfirmDelete
 			m.deleteTarget = m.cursor
 			m.deleteNeedsName = wt.Dirty > 0
@@ -600,6 +605,13 @@ func (m model) handleDeleteKey(msg tea.KeyPressMsg, key string) (tea.Model, tea.
 			return m.cancelDelete(), nil
 		}
 		wt := m.worktrees[m.filtered[m.deleteTarget]]
+		// deleteTarget is an index, and a refresh can slide the list under it;
+		// the main worktree is the one row where that would be unrecoverable.
+		if wt.IsMain {
+			m = m.cancelDelete()
+			m.statusMsg = errorStatus("cannot remove the main worktree")
+			return m, nil
+		}
 		if m.deleteNeedsName && strings.TrimSpace(m.textInput.Value()) != wt.Label() {
 			// Say nothing: the card already shows what it is waiting for, and
 			// a scolding status line under a half-typed name is noise.
