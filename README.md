@@ -31,19 +31,10 @@ mori remove feat      # Remove a worktree (asks before discarding changes)
 mori shell-init       # Print the shell function behind the cd
 ```
 
-## Shell integration
-
-A program cannot change its parent shell's directory, so `mori` prints the
-worktree you picked and a shell function does the `cd`. Add this to your rc:
-
 ```bash
 eval "$(mori shell-init)"          # bash / zsh — ~/.bashrc, ~/.zshrc
 mori shell-init fish | source      # fish — ~/.config/fish/config.fish
 ```
-
-Only the bare `mori` call is wrapped; every subcommand still writes its own
-output straight through. Without the function, `cd "$(mori)"` does the same
-thing by hand.
 
 ## Config
 
