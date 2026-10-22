@@ -471,18 +471,35 @@ func (m model) query() string {
 // ordering the list the moment the query is cleared. A branch hit outscores
 // the same query found in a path — you are usually naming a branch.
 func (m *model) applyFilter() {
-	query := m.query()
-	// The cursor holds its worktree across a rebuild it did not ask for — a
-	// background refresh, an archive toggle — so a reordered list never slides
-	// a different worktree under a key about to be pressed. A changed query is
-	// different: there the cursor belongs on the best match.
-	var keep string
-	changedQuery := query != m.lastQuery
-	if !changedQuery {
-		if wt := m.selectedWorktree(); wt != nil {
-			keep = wt.Label()
-		}
+	m.filterKeeping(m.selectedLabel())
+}
+
+// setWorktrees swaps in a fresh list. The cursor's worktree is named before
+// the swap: m.filtered indexes the list being replaced, and read through the
+// new one it names whatever now sits at that index — or runs off the end once
+// a worktree has gone.
+func (m *model) setWorktrees(wts []internal.Worktree) {
+	keep := m.selectedLabel()
+	m.worktrees = wts
+	m.filterKeeping(keep)
+}
+
+func (m model) selectedLabel() string {
+	if wt := m.selectedWorktree(); wt != nil {
+		return wt.Label()
 	}
+	return ""
+}
+
+// filterKeeping is applyFilter with the cursor's worktree named by the caller.
+//
+// The cursor holds its worktree across a rebuild it did not ask for — a
+// background refresh, an archive toggle — so a reordered list never slides a
+// different worktree under a key about to be pressed. A changed query is
+// different: there the cursor belongs on the best match.
+func (m *model) filterKeeping(keep string) {
+	query := m.query()
+	changedQuery := query != m.lastQuery
 	m.lastQuery = query
 
 	type hit struct{ idx, score int }

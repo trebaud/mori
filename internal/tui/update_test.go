@@ -640,6 +640,24 @@ func TestCursorHoldsItsWorktreeAcrossARefresh(t *testing.T) {
 	}
 }
 
+// A worktree removed behind the TUI's back shrinks the list under the cursor.
+// The cursor's worktree has to be named from the list it was chosen in: read
+// through the new one, an index into the old list ran off the end.
+func TestCursorSurvivesARefreshThatDropsAWorktree(t *testing.T) {
+	m := newTestModel(t, 4, 80, 24)
+	m.cursor = 3
+	want := m.worktrees[m.filtered[3]].Branch
+
+	wts := testWorktrees(4)
+	wts = append(wts[:1], wts[2:]...)
+	next, _ := m.Update(refreshedMsg{worktrees: wts})
+	m = next.(model)
+
+	if got := m.worktrees[m.filtered[m.cursor]].Branch; got != want {
+		t.Errorf("the refresh moved the cursor from %q to %q", want, got)
+	}
+}
+
 // Typing is different: a new query puts the cursor on the best match rather
 // than chasing whatever it was on.
 func TestANewQueryMovesTheCursorToTheBestMatch(t *testing.T) {

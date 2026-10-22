@@ -64,8 +64,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fingerprint = print
 				m.refreshInterval = refreshEvery
 			}
-			m.worktrees = msg.worktrees
-			m.applyFilter()
+			m.setWorktrees(msg.worktrees)
 		}
 		if m.sweepBranch == "" {
 			next, cmd := m.replayPending()
