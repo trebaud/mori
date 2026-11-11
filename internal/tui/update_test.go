@@ -624,7 +624,7 @@ func TestBranchHitsOutrankPathHits(t *testing.T) {
 // slide a different one under a key about to be pressed.
 func TestCursorHoldsItsWorktreeAcrossARefresh(t *testing.T) {
 	m := newTestModel(t, 4, 80, 24)
-	m.sortMode = internal.SortRecent
+	m.sortMode = internal.SortCreated
 	m.applyFilter()
 	m.cursor = 2
 	want := m.worktrees[m.filtered[2]].Branch

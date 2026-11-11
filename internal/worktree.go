@@ -323,46 +323,38 @@ func FindByBranch(worktrees []Worktree, branch string) *Worktree {
 	return nil
 }
 
-// SortMode orders a worktree list.
+// SortMode orders a worktree list. The main working tree leads in every
+// mode: it is the one you come back to, and it should not have to be found.
 type SortMode int
 
 const (
-	// SortDefault keeps git's order, which starts at the main worktree.
-	SortDefault SortMode = iota
-	// SortRecent puts the most recently committed worktrees first.
-	SortRecent
+	// SortCreated puts the most recently created worktrees first.
+	SortCreated SortMode = iota
 	// SortName orders alphabetically by branch.
 	SortName
 )
 
 func (s SortMode) String() string {
-	switch s {
-	case SortRecent:
-		return "recent"
-	case SortName:
+	if s == SortName {
 		return "name"
-	default:
-		return "default"
 	}
+	return "created"
 }
 
 // Next cycles to the following sort mode.
-func (s SortMode) Next() SortMode { return (s + 1) % 3 }
+func (s SortMode) Next() SortMode { return (s + 1) % 2 }
 
 // SortIndices stably reorders indices into wts according to mode.
 func SortIndices(wts []Worktree, indices []int, mode SortMode) {
-	if mode == SortDefault {
-		return
-	}
 	sort.SliceStable(indices, func(a, b int) bool {
 		x, y := wts[indices[a]], wts[indices[b]]
-		switch mode {
-		case SortRecent:
-			return x.Age().After(y.Age())
-		case SortName:
+		if x.IsMain != y.IsMain {
+			return x.IsMain
+		}
+		if mode == SortName {
 			return strings.ToLower(x.Label()) < strings.ToLower(y.Label())
 		}
-		return false
+		return x.Age().After(y.Age())
 	})
 }
 

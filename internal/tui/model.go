@@ -279,7 +279,7 @@ func newModel(worktrees []internal.Worktree, repoLabel, baseBranch string) model
 		baseBranch:      baseBranch,
 		textInput:       ti,
 		mode:            modeNormal,
-		sortMode:        internal.SortDefault,
+		sortMode:        internal.SortCreated,
 		archived:        loadArchived(),
 		paneOpen:        true,
 		refreshInterval: refreshEvery,

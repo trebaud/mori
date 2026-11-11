@@ -550,7 +550,7 @@ func (m model) renderFooter(width int) string {
 	left := renderHints(fitHints(width-3, m.footerHints()))
 
 	var indicators []string
-	if m.sortMode != internal.SortDefault {
+	if m.sortMode != internal.SortCreated {
 		indicators = append(indicators, mutedStyle.Render("sort ")+textStyle.Render(m.sortMode.String()))
 	}
 	if m.showArchive {
@@ -1002,7 +1002,7 @@ var helpSections = []struct {
 	}},
 	{"view", [][2]string{
 		{"/", "fuzzy filter, best matches first"},
-		{"s", "cycle sort: default/recent/name"},
+		{"s", "cycle sort: created/name"},
 		{"x", "archive / unarchive"},
 		{"X", "show or hide archived worktrees"},
 		{"?", "toggle this help"},

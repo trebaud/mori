@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 var moriBinary string
@@ -498,6 +499,36 @@ func TestListJSONCountsBehindForBranchesAndDetached(t *testing.T) {
 	}
 	if detached == nil || detached.Ahead != 0 || detached.Behind != 1 {
 		t.Errorf("detached worktree: got %+v, want 0 ahead 1 behind", detached)
+	}
+}
+
+// The main worktree leads, then the newest worktree first — not git's order,
+// which is alphabetical by path once you are past main.
+func TestListOrdersMainThenNewestFirst(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepo(t)
+	for _, branch := range []string{"older", "newer"} {
+		if res := runMori(t, dir, "new", branch, "-r", dir); res.exitCode != 0 {
+			t.Fatalf("mori new %s: %s", branch, res.stderr)
+		}
+	}
+	// Creation time is the mtime of the worktree's .git file; set it rather
+	// than trust two creates a millisecond apart to land in order.
+	base := time.Now().Add(-time.Hour)
+	for i, branch := range []string{"older", "newer"} {
+		when := base.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(filepath.Join(worktreePath(dir, branch), ".git"), when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items := listJSON(t, dir)
+	var got []string
+	for _, wt := range items {
+		got = append(got, wt.Branch)
+	}
+	if strings.Join(got, ",") != "main,newer,older" {
+		t.Errorf("order = %v, want [main newer older]", got)
 	}
 }
 

@@ -11,11 +11,22 @@ import (
 )
 
 // PrintList writes every worktree of the current repository to stdout, the
-// main working tree included, as a table by default or as JSON for scripting.
+// main working tree first and the rest newest first, as a table by default or
+// as JSON for scripting.
 func PrintList(jsonOutput bool) error {
-	worktrees, err := internal.List()
+	all, err := internal.List()
 	if err != nil {
 		return err
+	}
+	// The same order the TUI opens in: main first, then newest worktree first.
+	order := make([]int, len(all))
+	for i := range order {
+		order[i] = i
+	}
+	internal.SortIndices(all, order, internal.SortCreated)
+	worktrees := make([]internal.Worktree, len(all))
+	for i, j := range order {
+		worktrees[i] = all[j]
 	}
 
 	if jsonOutput {

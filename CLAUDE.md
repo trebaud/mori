@@ -25,7 +25,8 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
   every worktree git reports, the main working tree included, and is what every
   display and lookup uses. Main is flagged `IsMain` rather than hidden: it is
   the row you are most often standing in, and the one `d` and `mori remove`
-  refuse — a list that left it out could not say so.
+  refuse — a list that left it out could not say so. It sorts first in every
+  mode; the rest default to newest-created first (the `.git` file's mtime).
   `ListQuick()` is `List()` without the `git status` counts (`Dirty` is
   `DirtyUnknown`): HEAD dates and ahead/behind come from one `git log` and one
   `for-each-ref` for all worktrees, so it costs a few processes regardless of

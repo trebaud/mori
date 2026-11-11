@@ -77,13 +77,14 @@ func TestDisplayPath(t *testing.T) {
 func TestSortIndices(t *testing.T) {
 	now := time.Now()
 	wts := []Worktree{
-		{Branch: "main", LastCommit: now.Add(-time.Hour)},
-		{Branch: "zeta", LastCommit: now.Add(-time.Minute)},
-		{Branch: "alpha", LastCommit: now.Add(-24 * time.Hour)},
+		{Branch: "zeta", Created: now.Add(-time.Minute)},
+		{Branch: "main", IsMain: true, LastCommit: now},
+		{Branch: "alpha", Created: now.Add(-24 * time.Hour)},
+		{Branch: "beta", Created: now.Add(-time.Hour)},
 	}
 
 	order := func(mode SortMode) []string {
-		idx := []int{0, 1, 2}
+		idx := []int{0, 1, 2, 3}
 		SortIndices(wts, idx, mode)
 		out := make([]string, len(idx))
 		for i, j := range idx {
@@ -92,13 +93,13 @@ func TestSortIndices(t *testing.T) {
 		return out
 	}
 
+	// The main worktree leads in every mode, whatever its own dates say.
 	cases := []struct {
 		mode SortMode
 		want []string
 	}{
-		{SortDefault, []string{"main", "zeta", "alpha"}},
-		{SortRecent, []string{"zeta", "main", "alpha"}},
-		{SortName, []string{"alpha", "main", "zeta"}},
+		{SortCreated, []string{"main", "zeta", "beta", "alpha"}},
+		{SortName, []string{"main", "alpha", "beta", "zeta"}},
 	}
 	for _, c := range cases {
 		got := order(c.mode)
@@ -112,12 +113,8 @@ func TestSortIndices(t *testing.T) {
 }
 
 func TestSortModeNextCycles(t *testing.T) {
-	m := SortDefault
-	for i := 0; i < 3; i++ {
-		m = m.Next()
-	}
-	if m != SortDefault {
-		t.Errorf("Next() did not cycle back to default after 3 steps, got %v", m)
+	if m := SortCreated.Next().Next(); m != SortCreated {
+		t.Errorf("Next() did not cycle back to created after 2 steps, got %v", m)
 	}
 }
 
