@@ -26,6 +26,10 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
   display and lookup uses. Main is flagged `IsMain` rather than hidden: it is
   the row you are most often standing in, and the one `d` and `mori remove`
   refuse — a list that left it out could not say so.
+  `ListQuick()` is `List()` without the `git status` counts (`Dirty` is
+  `DirtyUnknown`): HEAD dates and ahead/behind come from one `git log` and one
+  `for-each-ref` for all worktrees, so it costs a few processes regardless of
+  count. `FillDirty` adds the counts, at most NumCPU `git status` at a time.
 - `paths.go` — where mori keeps state. Worktrees go in
   `~/.mori/worktrees/<repo>/<branch>`, never inside the repository: nested,
   git treats them as an untracked embedded repo and `git add -A` commits a
@@ -36,9 +40,12 @@ Entry point is `cmd/mori/main.go` — a cobra root that dispatches to
   when one fails it is the only account of why, and both the CLI and the TUI
   print it.
 
-The TUI is given no list to start with. `Init` asks for one, so the first
-frame — brand, chrome, a spinner — is on screen while git is still being
-queried. Keys typed in that window are held in `pendingKeys` and replayed
+The TUI is given no list to start with. `Init` asks for two at once — the
+quick list and the full one — so the first frame — brand, chrome, a spinner —
+is on screen while git is still being queried, the rows appear as soon as the
+quick list lands, and the change counts fill in when the full one does. A
+partial `refreshedMsg` is only applied while still loading, so it can never
+overwrite the full list, and `d` refuses a row whose changes are uncounted. Keys typed in that window are held in `pendingKeys` and replayed
 when the list lands, since drawing early is worthless if it also means
 swallowing what the user types at the frame it bought. Every refresh beat costs several git processes per worktree, so a
 list that comes back identical doubles the interval up to `refreshMax`, a

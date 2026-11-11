@@ -122,10 +122,13 @@ type removedWorktree struct {
 	branch, path, displayPath string
 }
 
-// refreshedMsg carries a freshly queried worktree list.
+// refreshedMsg carries a freshly queried worktree list. A partial one has no
+// uncommitted-change counts yet: it is the first list, drawn while `git
+// status` is still running in every worktree, and the full one replaces it.
 type refreshedMsg struct {
 	worktrees []internal.Worktree
 	err       error
+	partial   bool
 }
 
 // tickMsg drives the periodic background refresh.
@@ -289,7 +292,10 @@ func (m model) Init() tea.Cmd {
 	// The list is asked for here rather than before the program starts, so the
 	// first frame is on screen — brand, chrome and a spinner — while git is
 	// still being queried.
-	return tea.Batch(refreshCmd(), tickCmd(refreshEvery), spinnerTickCmd())
+	// The quick list lands first and the full one, change counts and all,
+	// replaces it: with dozens of worktrees, `git status` in each is most
+	// of the wait, and nothing else on the screen needs it.
+	return tea.Batch(quickListCmd(), refreshCmd(), tickCmd(refreshEvery), spinnerTickCmd())
 }
 
 // fingerprint is a cheap stand-in for the list's contents: everything the

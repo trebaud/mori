@@ -30,6 +30,14 @@ func refreshCmd() tea.Cmd {
 	}
 }
 
+// quickListCmd queries everything but the uncommitted-change counts.
+func quickListCmd() tea.Cmd {
+	return func() tea.Msg {
+		wts, err := internal.ListQuick()
+		return refreshedMsg{worktrees: wts, err: err, partial: true}
+	}
+}
+
 // stepStartedMsg fires when a creation step begins running.
 type stepStartedMsg struct{ name string }
 

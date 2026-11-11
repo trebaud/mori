@@ -896,3 +896,50 @@ func TestQuitDuringTheFirstLoadIsImmediate(t *testing.T) {
 		}
 	}
 }
+
+// The quick list, with no change counts yet, is drawn the moment it lands,
+// and the full one replaces it. Should the full one win the race, the quick
+// one arriving after must not put the unknown counts back.
+func TestQuickListDrawsFirstAndNeverReplacesTheFullOne(t *testing.T) {
+	quick := testWorktrees(3)
+	for i := range quick {
+		quick[i].Dirty = internal.DirtyUnknown
+	}
+
+	m := newModel(nil, "~/repo", "main")
+	m.width, m.height = 80, 24
+	next, _ := m.Update(refreshedMsg{worktrees: quick, partial: true})
+	m = next.(model)
+	if m.loading || len(m.filtered) != 3 {
+		t.Fatalf("the quick list was not drawn: loading=%v rows=%d", m.loading, len(m.filtered))
+	}
+	if m.fingerprint != "" {
+		t.Error("the quick list set the fingerprint the full one backs off against")
+	}
+
+	next, _ = m.Update(refreshedMsg{worktrees: testWorktrees(3)})
+	m = next.(model)
+	next, _ = m.Update(refreshedMsg{worktrees: quick, partial: true})
+	m = next.(model)
+	for _, i := range m.filtered {
+		if m.worktrees[i].Dirty == internal.DirtyUnknown {
+			t.Fatal("a late quick list replaced the full one")
+		}
+	}
+}
+
+// Until the changes are counted, the confirmation cannot say what removing a
+// worktree would lose, so `d` does not open it.
+func TestDeleteWaitsForTheChangeCount(t *testing.T) {
+	m := newTestModel(t, 3, 80, 24)
+	m.worktrees[m.filtered[0]].Dirty = internal.DirtyUnknown
+	m.cursor = 0
+	next, _ := m.handleNormalKey("d")
+	m = next.(model)
+	if m.mode == modeConfirmDelete {
+		t.Fatal("d opened a confirmation for a worktree whose changes are uncounted")
+	}
+	if m.statusMsg == nil || !m.statusMsg.isError {
+		t.Error("d said nothing about why it did not open")
+	}
+}

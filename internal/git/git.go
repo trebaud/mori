@@ -160,7 +160,10 @@ func RemoveWorktree(path string, force bool) error {
 // DirtyCount returns the number of files with uncommitted changes (staged,
 // unstaged, or untracked) in the worktree at path.
 func DirtyCount(path string) int {
-	out, err := exec.Command("git", "-C", path, "status", "--porcelain").Output()
+	// --no-optional-locks: mori polls this in the background, and a status
+	// that refreshes the index takes index.lock — which is how a `git commit`
+	// typed in that worktree at the same moment fails.
+	out, err := exec.Command("git", "--no-optional-locks", "-C", path, "status", "--porcelain").Output()
 	if err != nil {
 		return 0
 	}
@@ -191,6 +194,69 @@ func LastCommit(path string) (time.Time, string) {
 		return time.Time{}, fields[1]
 	}
 	return time.Unix(secs, 0), fields[1]
+}
+
+// CommitStamp is the timestamp and subject of one commit.
+type CommitStamp struct {
+	When    time.Time
+	Subject string
+}
+
+// CommitStamps returns the timestamp and subject of each of shas, keyed by the
+// full sha, from a single `git log`. Worktrees are listed by the dozen and
+// most of them sit on a commit another one shares; one process for all of them
+// is what keeps a long list from costing a process per row.
+func CommitStamps(repo string, shas []string) (map[string]CommitStamp, error) {
+	cmd := exec.Command("git", "-C", repo, "log", "--no-walk=unsorted", "--stdin",
+		"--format=%H%x1f%ct%x1f%s")
+	cmd.Stdin = strings.NewReader(strings.Join(shas, "\n") + "\n")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	stamps := make(map[string]CommitStamp, len(shas))
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		fields := strings.SplitN(line, "\x1f", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		st := CommitStamp{Subject: fields[2]}
+		if secs, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+			st.When = time.Unix(secs, 0)
+		}
+		stamps[fields[0]] = st
+	}
+	return stamps, nil
+}
+
+// BranchesAheadBehind counts, for every local branch, the commits it is ahead
+// of and behind base — keyed by branch name, from a single `for-each-ref`.
+// It needs git 2.41 for %(ahead-behind); older gits return an error, and the
+// caller falls back to asking per worktree.
+func BranchesAheadBehind(repo, base string) (map[string][2]int, error) {
+	out, err := exec.Command("git", "-C", repo, "for-each-ref",
+		"--format=%(refname)%1f%(ahead-behind:"+base+")", "refs/heads/").Output()
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string][2]int)
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		ref, ab, ok := strings.Cut(line, "\x1f")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(ab)
+		if len(fields) != 2 {
+			continue
+		}
+		ahead, err1 := strconv.Atoi(fields[0])
+		behind, err2 := strconv.Atoi(fields[1])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		counts[strings.TrimPrefix(ref, "refs/heads/")] = [2]int{ahead, behind}
+	}
+	return counts, nil
 }
 
 // AheadBehind counts commits the worktree's HEAD is ahead of and behind the

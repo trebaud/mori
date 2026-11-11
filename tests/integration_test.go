@@ -473,6 +473,34 @@ func TestListJSONTracksGitState(t *testing.T) {
 	}
 }
 
+// Branches are counted against the default branch in one batch; a detached
+// worktree has no branch to batch and is counted on its own. Both have to
+// notice the default branch moving on without them.
+func TestListJSONCountsBehindForBranchesAndDetached(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepoWithWorktree(t, "lagging")
+	spike := filepath.Join(filepath.Dir(dir), "spike")
+	gitInRepo(t, dir, "worktree", "add", "--detach", spike, "main")
+
+	os.WriteFile(filepath.Join(dir, "more.txt"), []byte("more\n"), 0o644)
+	gitInRepo(t, dir, "add", "more.txt")
+	gitInRepo(t, dir, "commit", "-m", "move main on")
+
+	items := listJSON(t, dir)
+	if wt := findByBranch(items, "lagging"); wt == nil || wt.Ahead != 0 || wt.Behind != 1 {
+		t.Errorf("lagging branch: got %+v, want 0 ahead 1 behind", wt)
+	}
+	var detached *worktreeJSON
+	for i := range items {
+		if items[i].Detached {
+			detached = &items[i]
+		}
+	}
+	if detached == nil || detached.Ahead != 0 || detached.Behind != 1 {
+		t.Errorf("detached worktree: got %+v, want 0 ahead 1 behind", detached)
+	}
+}
+
 func TestListNotInRepo(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -380,6 +380,9 @@ func (m model) rowLabel(wt internal.Worktree) string {
 // so with a single dot: the eye should catch the rows carrying work, not read
 // the word "clean" five times on the way down.
 func gitStateText(wt internal.Worktree) string {
+	if wt.Dirty == internal.DirtyUnknown {
+		return "…"
+	}
 	if wt.Dirty > 0 {
 		return fmt.Sprintf("● %d", wt.Dirty)
 	}
@@ -880,7 +883,9 @@ func (m model) detailFields(wt internal.Worktree) []detailField {
 	}
 
 	changes := "clean"
-	if wt.Dirty > 0 {
+	if wt.Dirty == internal.DirtyUnknown {
+		changes = "counting changes…"
+	} else if wt.Dirty > 0 {
 		noun := "files"
 		if wt.Dirty == 1 {
 			noun = "file"

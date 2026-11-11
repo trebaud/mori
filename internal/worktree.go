@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -28,6 +29,8 @@ type Worktree struct {
 	LastCommit  time.Time // timestamp of HEAD
 	Subject     string    // subject line of HEAD
 	Created     time.Time // when the worktree was created, zero for the main tree
+
+	sha string // full HEAD sha, for batching git queries
 }
 
 // Age is the time the worktree has existed, which is what a listing means by
@@ -53,10 +56,29 @@ func (w Worktree) Label() string {
 	return "(detached)"
 }
 
+// DirtyUnknown is Dirty before `git status` has been read for the worktree.
+// It is not zero on purpose: zero means clean, and a worktree nobody has
+// looked at yet is not known to be clean.
+const DirtyUnknown = -1
+
 // List returns every worktree of the repository containing the working
 // directory — the main working tree included — enriched with git state.
-// Per-worktree git queries run in parallel since each one shells out.
 func List() ([]Worktree, error) {
+	wts, err := ListQuick()
+	if err != nil {
+		return nil, err
+	}
+	FillDirty(wts)
+	return wts, nil
+}
+
+// ListQuick is List without the uncommitted-change counts, which it leaves at
+// DirtyUnknown. Those are the slow part — `git status` stats every tracked
+// file of every worktree — while everything else comes from a handful of git
+// processes however many worktrees there are: one `git log` dates every HEAD
+// and one `for-each-ref` counts every branch against the default. The TUI
+// draws this first and fills the counts in after.
+func ListQuick() ([]Worktree, error) {
 	mainPath, err := git.FindMainRepo(".")
 	if err != nil {
 		return nil, fmt.Errorf("not a git repository")
@@ -71,25 +93,75 @@ func List() ([]Worktree, error) {
 	base := git.DefaultBranch(mainPath)
 	home := homeDir()
 
-	var wg sync.WaitGroup
+	var shas []string
 	for i := range wts {
 		wts[i].IsMain = wts[i].Path == mainPath
 		wts[i].DisplayPath = displayPath(wts[i].Path, mainPath, home)
-
-		wg.Add(1)
-		go func(w *Worktree) {
-			defer wg.Done()
-			w.Dirty = git.DirtyCount(w.Path)
-			w.LastCommit, w.Subject = git.LastCommit(w.Path)
-			w.Created = git.Created(w.Path)
-			if w.Branch != base {
-				w.Ahead, w.Behind = git.AheadBehind(w.Path, base)
-			}
-		}(&wts[i])
+		wts[i].Created = git.Created(wts[i].Path)
+		wts[i].Dirty = DirtyUnknown
+		// An unborn branch reports an all-zero HEAD, which would fail the
+		// whole batch; it has no commit to date anyway.
+		if strings.Trim(wts[i].sha, "0") != "" {
+			shas = append(shas, wts[i].sha)
+		}
 	}
+
+	var (
+		stamps   map[string]git.CommitStamp
+		stampErr error
+		counts   map[string][2]int
+		wg       sync.WaitGroup
+	)
+	wg.Add(2)
+	go func() { defer wg.Done(); stamps, stampErr = git.CommitStamps(mainPath, shas) }()
+	// On failure counts stays nil, and every row asks for itself below.
+	go func() { defer wg.Done(); counts, _ = git.BranchesAheadBehind(mainPath, base) }()
 	wg.Wait()
 
+	// Whatever the batches could not answer — an old git, a detached HEAD,
+	// a sha git refused — is asked per worktree, as it always was.
+	forEach(len(wts), func(i int) {
+		w := &wts[i]
+		if stampErr == nil {
+			st := stamps[w.sha]
+			w.LastCommit, w.Subject = st.When, st.Subject
+		} else {
+			w.LastCommit, w.Subject = git.LastCommit(w.Path)
+		}
+		if w.Branch == base {
+			return
+		}
+		if ab, ok := counts[w.Branch]; ok {
+			w.Ahead, w.Behind = ab[0], ab[1]
+		} else {
+			w.Ahead, w.Behind = git.AheadBehind(w.Path, base)
+		}
+	})
+
 	return wts, nil
+}
+
+// FillDirty counts the uncommitted changes of each worktree in place.
+func FillDirty(wts []Worktree) {
+	forEach(len(wts), func(i int) { wts[i].Dirty = git.DirtyCount(wts[i].Path) })
+}
+
+// forEach runs fn for 0..n-1, as many at a time as there are CPUs. Each call
+// is a git process, and `git status` is disk-bound: fifty of them started at
+// once only queue on the same disk and the same scheduler, and slow down the
+// terminal they are meant to be filling.
+func forEach(n int, fn func(i int)) {
+	sem := make(chan struct{}, runtime.NumCPU())
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			fn(i)
+		}()
+	}
+	wg.Wait()
 }
 
 // parseList turns `git worktree list --porcelain` output into Worktrees.
@@ -117,6 +189,7 @@ func parseList(output string) []Worktree {
 			// Attribute before any worktree header; ignore.
 		case strings.HasPrefix(line, "HEAD "):
 			sha := strings.TrimPrefix(line, "HEAD ")
+			current.sha = sha
 			if len(sha) > 7 {
 				sha = sha[:7]
 			}

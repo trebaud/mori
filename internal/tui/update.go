@@ -52,6 +52,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case refreshedMsg:
+		if msg.partial {
+			// Only worth drawing while there is nothing better on screen.
+			// Errors wait for the full list, which will report the same one.
+			if !m.loading || msg.err != nil {
+				return m, nil
+			}
+			m.loading = false
+			m.setWorktrees(msg.worktrees)
+			next, cmd := m.replayPending()
+			return withPaneFollow(next, cmd)
+		}
 		m.loading = false
 		if msg.err != nil {
 			m.statusMsg = errorStatus(msg.err.Error())
@@ -412,6 +423,12 @@ func (m model) handleNormalKey(key string) (tea.Model, tea.Cmd) {
 		if wt := m.selectedWorktree(); wt != nil {
 			if wt.IsMain {
 				m.statusMsg = errorStatus("cannot remove the main worktree")
+				return m, nil
+			}
+			// The confirmation is where uncommitted work gets spelled out, and
+			// on the first list it has not been counted yet.
+			if wt.Dirty == internal.DirtyUnknown {
+				m.statusMsg = errorStatus("still counting changes — try again in a moment")
 				return m, nil
 			}
 			m.mode = modeConfirmDelete
